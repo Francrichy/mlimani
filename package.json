@@ -1,0 +1,18 @@
+{
+  "name": "mlimanifleet",
+  "version": "1.0.0",
+  "description": "MlimaniFleet — SaaS Fleet ERP for Trucks & Dala Dala (Tanzania)",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "build": "echo \"No compile step — static public/ + Node server\"",
+    "dev": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["fleet", "erp", "tanzania", "daladala", "saas"],
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {}
+}

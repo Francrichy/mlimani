@@ -669,6 +669,8 @@ async function renderMaintenance() {
   const vMap = Object.fromEntries(vehicles.map(v => [v.id, v.plate]));
   return `
   <div class="page-enter space-y-5">
+    ${duePanel}
+
     <div class="flex justify-between">
       <p class="text-sm text-slate-500">${items.length} work order(s)</p>
       <button onclick="document.getElementById('mnt-form').classList.toggle('hidden')" class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2">
@@ -873,11 +875,14 @@ async function saveGpsDevice() {
 }
 
 async function renderFinance() {
-  const [summary, { loans }, { invoices }] = await Promise.all([
+  const [summary, { loans }, { invoices }, expData] = await Promise.all([
     api('/api/finance/summary'),
     api('/api/loans'),
-    api('/api/invoices')
+    api('/api/invoices'),
+    api('/api/expenses').catch(() => ({ expenses: [], categories: [] }))
   ]);
+  const opExpenses = expData.expenses || [];
+  const expCats = expData.categories || ['office_rent','yard_rent','security','salaries','utilities','insurance','other'];
   const pnl = summary.pnl || {};
   const pay = summary.payables || {};
   const recv = summary.receivables || {};
@@ -972,7 +977,7 @@ async function renderFinance() {
               <td class="py-2 text-xs">${i.payment_terms}${i.credit_days?` (${i.credit_days}d)`:''}</td>
               <td class="py-2 text-xs">${i.due_date||'—'}</td>
               <td class="py-2"><span class="text-xs px-2 py-0.5 rounded ${i.status==='overdue'?'bg-red-50 text-red-700':i.status==='paid'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}">${i.status}</span></td>
-              <td class="py-2 pr-3">${i.status!=='paid'?`<button onclick="payInvoiceAmt('${i.id}')" class="text-xs text-brand-600">Receive</button>`:''}</td>
+              <td class="py-2 pr-3"><button onclick="printInvoice('${i.id}')" class="text-xs text-slate-600 mr-2">Print</button>${i.status!=='paid'?`<button onclick="payInvoiceAmt('${i.id}')" class="text-xs text-brand-600">Receive</button>`:''}</td>
             </tr>`).join('') || '<tr><td colspan="7" class="px-4 py-6 text-center text-slate-400">No invoices</td></tr>'}
           </tbody>
         </table>
@@ -987,7 +992,43 @@ async function renderFinance() {
         <div><div class="text-slate-500">Maintenance</div><div class="font-bold text-lg">TZS ${fmt(pnl.maintenance_cost_tzs||0)}</div></div>
         <div><div class="text-slate-500">Net</div><div class="font-bold text-lg ${ (pnl.net_tzs||0) >= 0 ? 'text-emerald-600':'text-red-600'}">TZS ${fmt(pnl.net_tzs||0)}</div></div>
       </div>
+    
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <div class="px-5 py-4 border-b flex justify-between items-center">
+        <div>
+          <h3 class="font-semibold">Operating expenses</h3>
+          <p class="text-xs text-slate-500">Office rent, yard, security, salaries, utilities…</p>
+        </div>
+        <button onclick="document.getElementById('exp-form').classList.toggle('hidden')" class="text-sm text-brand-600 font-medium">+ Expense</button>
+      </div>
+      <div id="exp-form" class="hidden p-4 border-b bg-slate-50 space-y-2">
+        <div class="grid sm:grid-cols-3 gap-2">
+          <select id="ex-cat" class="border rounded-lg px-3 py-2 text-sm">
+            ${expCats.map(c => `<option value="${c}">${c.replace(/_/g,' ')}</option>`).join('')}
+          </select>
+          <input id="ex-desc" placeholder="Description" class="border rounded-lg px-3 py-2 text-sm">
+          <input id="ex-amt" type="number" placeholder="Amount TZS" class="border rounded-lg px-3 py-2 text-sm">
+          <input id="ex-date" type="date" class="border rounded-lg px-3 py-2 text-sm">
+          <input id="ex-vendor" placeholder="Vendor / payee" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
+        </div>
+        <button onclick="saveExpense()" class="bg-brand-600 text-white px-3 py-1.5 rounded-lg text-sm">Save expense</button>
+      </div>
+      <table class="w-full text-sm">
+        <thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
+          <th class="px-4 py-2">Date</th><th class="py-2">Category</th><th class="py-2">Description</th><th class="py-2">Amount</th><th class="py-2"></th>
+        </tr></thead>
+        <tbody class="divide-y">
+          ${opExpenses.slice(0,20).map(e => `<tr>
+            <td class="px-4 py-2">${e.expense_date||'—'}</td>
+            <td class="py-2"><span class="text-xs px-2 py-0.5 rounded bg-slate-100">${(e.category||'').replace(/_/g,' ')}</span></td>
+            <td class="py-2">${e.description||e.vendor||'—'}</td>
+            <td class="py-2 font-medium">TZS ${fmt(e.amount_tzs||0)}</td>
+            <td class="py-2 pr-3"><button onclick="removeExpense('${e.id}')" class="text-xs text-red-500">Del</button></td>
+          </tr>`).join('') || '<tr><td colspan="5" class="px-4 py-6 text-center text-slate-400">No operating expenses yet</td></tr>'}
+        </tbody>
+      </table>
     </div>
+</div>
   </div>`;
 }
 async function saveLoan() {
@@ -1032,64 +1073,131 @@ async function payInvoiceAmt(id) {
 
 
 async function renderInventory() {
-  const parts = [
-    { sku: 'OIL-15W40', name: 'Engine oil 15W-40 (20L)', stock: 24, min: 10, unit: 'drums', cost: 185000 },
-    { sku: 'TYRE-295', name: 'Tyre 295/80R22.5', stock: 8, min: 6, unit: 'pcs', cost: 420000 },
-    { sku: 'FILTER-AF', name: 'Air filter (Isuzu)', stock: 15, min: 5, unit: 'pcs', cost: 45000 },
-    { sku: 'BRAKE-PAD', name: 'Brake pads set', stock: 3, min: 4, unit: 'sets', cost: 95000 },
-    { sku: 'BAT-12V', name: 'Battery 12V 150Ah', stock: 6, min: 2, unit: 'pcs', cost: 280000 }
-  ];
+  const { parts } = await api('/api/inventory');
+  const low = parts.filter(x => x.stock <= x.min_stock).length;
   return `
   <div class="page-enter space-y-5">
-    <div class="flex justify-between items-center">
-      <p class="text-sm text-slate-500">${parts.length} part types · ${parts.filter(x=>x.stock<=x.min).length} low stock — link loans via Finance for credit purchases</p>
+    <div class="flex justify-between items-center flex-wrap gap-3">
+      <p class="text-sm text-slate-500">${parts.length} part types · <span class="${low?'text-red-600 font-medium':''}">${low} low stock</span></p>
+      <button onclick="document.getElementById('inv-part-form').classList.toggle('hidden')" class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2">
+        <i data-lucide="plus" class="w-4 h-4"></i> Add part
+      </button>
+    </div>
+    <div id="inv-part-form" class="hidden bg-white rounded-xl border p-5 space-y-3">
+      <h3 class="font-semibold">New inventory item</h3>
+      <div class="grid sm:grid-cols-3 gap-3">
+        <input id="ip-sku" placeholder="SKU" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="ip-name" placeholder="Part name *" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
+        <select id="ip-cat" class="border rounded-lg px-3 py-2 text-sm">
+          <option value="oil">Engine oil</option><option value="filter">Filter</option>
+          <option value="tyre">Tyre</option><option value="brake">Brake</option>
+          <option value="battery">Battery</option><option value="general">General</option>
+        </select>
+        <input id="ip-stock" type="number" placeholder="Stock qty" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="ip-min" type="number" placeholder="Min stock" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="ip-unit" placeholder="Unit (pcs, drums…)" value="pcs" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="ip-cost" type="number" placeholder="Unit cost TZS" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="ip-supplier" placeholder="Supplier" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
+      </div>
+      <button onclick="saveInventoryPart()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm">Save part</button>
     </div>
     <div class="bg-white rounded-xl border overflow-hidden">
       <table class="w-full text-sm">
         <thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
-          <th class="px-5 py-3">SKU</th><th class="py-3">Part</th><th class="py-3">Stock</th><th class="py-3">Min</th><th class="py-3">Unit cost</th><th class="py-3">Status</th>
+          <th class="px-5 py-3">SKU</th><th class="py-3">Part</th><th class="py-3">Stock</th><th class="py-3">Min</th><th class="py-3">Unit cost</th><th class="py-3">Status</th><th class="py-3"></th>
         </tr></thead>
         <tbody class="divide-y">
           ${parts.map(x => `<tr>
             <td class="px-5 py-3 font-mono text-xs">${x.sku}</td>
-            <td class="py-3 font-medium">${x.name}</td>
-            <td class="py-3">${x.stock} ${x.unit}</td>
-            <td class="py-3 text-slate-500">${x.min}</td>
-            <td class="py-3">TZS ${fmt(x.cost)}</td>
-            <td class="py-3">${x.stock<=x.min?'<span class="text-xs px-2 py-0.5 rounded bg-red-50 text-red-700">Low stock</span>':'<span class="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">OK</span>'}</td>
-          </tr>`).join('')}
+            <td class="py-3 font-medium">${x.name}<div class="text-xs text-slate-400">${x.category||''}</div></td>
+            <td class="py-3">${x.stock} ${x.unit||''}</td>
+            <td class="py-3 text-slate-500">${x.min_stock}</td>
+            <td class="py-3">TZS ${fmt(x.unit_cost_tzs||0)}</td>
+            <td class="py-3">${x.stock<=x.min_stock?'<span class="text-xs px-2 py-0.5 rounded bg-red-50 text-red-700">Low stock</span>':'<span class="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">OK</span>'}</td>
+            <td class="py-3 pr-3 space-x-2">
+              <button onclick="adjustPart('${x.id}',1)" class="text-xs text-brand-600">+1</button>
+              <button onclick="adjustPart('${x.id}',-1)" class="text-xs text-slate-500">-1</button>
+              <button onclick="removePart('${x.id}')" class="text-xs text-red-500">Del</button>
+            </td>
+          </tr>`).join('') || '<tr><td colspan="7" class="px-5 py-8 text-center text-slate-400">No parts — click Add part</td></tr>'}
         </tbody>
       </table>
     </div>
   </div>`;
 }
+async function saveInventoryPart() {
+  try {
+    await api('/api/inventory', { method:'POST', body: JSON.stringify({
+      sku: document.getElementById('ip-sku').value,
+      name: document.getElementById('ip-name').value,
+      category: document.getElementById('ip-cat').value,
+      stock: +document.getElementById('ip-stock').value,
+      min_stock: +document.getElementById('ip-min').value,
+      unit: document.getElementById('ip-unit').value,
+      unit_cost_tzs: +document.getElementById('ip-cost').value,
+      supplier_name: document.getElementById('ip-supplier').value
+    })});
+    showPage('inventory');
+  } catch(e) { alert(e.message); }
+}
+async function adjustPart(id, delta) {
+  await api('/api/inventory/'+id+'/adjust', { method:'POST', body: JSON.stringify({ delta, reason: delta>0?'stock in':'stock out' }) });
+  showPage('inventory');
+}
+async function removePart(id) {
+  if (!confirm('Delete this part?')) return;
+  await api('/api/inventory/'+id, { method:'DELETE' });
+  showPage('inventory');
+}
 
 async function renderReports() {
+  const r = await api('/api/reports/summary');
+  const pnl = r.pnl || {};
+  const fleet = r.fleet || {};
   return `
-  <div class="page-enter space-y-5">
-    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      ${[['Fleet utilisation','On-route hours vs idle','bar-chart-3'],
-         ['Fuel efficiency','L/100km by vehicle','fuel'],
-         ['Trip performance','On-time & revenue','route'],
-         ['Maintenance cost','By vehicle & type','wrench'],
-         ['Driver scorecard','Trips, incidents, fuel','users'],
-         ['P&L summary','Revenue vs costs','wallet']].map(([t,d,i]) => `
-        <div class="bg-white rounded-xl border p-5 hover:shadow-md transition cursor-pointer">
-          <div class="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center mb-3"><i data-lucide="${i}" class="w-5 h-5 text-brand-600"></i></div>
-          <div class="font-semibold">${t}</div>
-          <div class="text-xs text-slate-500 mt-1">${d}</div>
-          <button class="mt-3 text-xs text-brand-600 font-medium">Generate →</button>
-        </div>`).join('')}
-    </div>
-    <div class="bg-white rounded-xl border p-5">
-      <h3 class="font-semibold mb-2">Quick period report</h3>
-      <div class="flex flex-wrap gap-3 items-end">
-        <div><label class="text-xs text-slate-500">From</label><input type="date" value="2026-10-01" class="block border rounded-lg px-3 py-2 text-sm mt-1"></div>
-        <div><label class="text-xs text-slate-500">To</label><input type="date" value="2026-10-21" class="block border rounded-lg px-3 py-2 text-sm mt-1"></div>
-        <button class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg">Export PDF</button>
-        <button class="border text-sm px-4 py-2 rounded-lg">Export Excel</button>
+  <div class="page-enter space-y-6">
+    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="bg-white rounded-xl border p-5">
+        <div class="text-xs text-slate-500 font-medium">Revenue</div>
+        <div class="text-2xl font-bold mt-1 text-emerald-600">TZS ${fmt(pnl.revenue_tzs||0)}</div>
+      </div>
+      <div class="bg-white rounded-xl border p-5">
+        <div class="text-xs text-slate-500 font-medium">Total expenses</div>
+        <div class="text-2xl font-bold mt-1">TZS ${fmt(pnl.expenses_tzs||0)}</div>
+        <div class="text-xs text-slate-400 mt-1">Fuel ${fmt(pnl.fuel_cost_tzs||0)} · Maint ${fmt(pnl.maintenance_cost_tzs||0)} · Ops ${fmt(pnl.operating_expenses_tzs||0)}</div>
+      </div>
+      <div class="bg-white rounded-xl border p-5">
+        <div class="text-xs text-slate-500 font-medium">Net P&amp;L</div>
+        <div class="text-2xl font-bold mt-1 ${(pnl.net_tzs||0)>=0?'text-emerald-600':'text-red-600'}">TZS ${fmt(pnl.net_tzs||0)}</div>
+      </div>
+      <div class="bg-white rounded-xl border p-5">
+        <div class="text-xs text-slate-500 font-medium">Fleet utilisation</div>
+        <div class="text-2xl font-bold mt-1">${fleet.utilization_pct||0}%</div>
+        <div class="text-xs text-slate-400 mt-1">${fleet.on_route||0} on route / ${fleet.total||0} vehicles</div>
       </div>
     </div>
+    <div class="grid sm:grid-cols-3 gap-4">
+      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Debt to suppliers</div><div class="text-xl font-bold mt-1 text-red-600">TZS ${fmt((r.payables||{}).total_tzs||0)}</div></div>
+      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Debt from clients</div><div class="text-xl font-bold mt-1 text-brand-700">TZS ${fmt((r.receivables||{}).total_tzs||0)}</div></div>
+      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Maint due · Low stock</div><div class="text-xl font-bold mt-1">${r.maintenance_due||0} · ${r.low_stock_parts||0}</div></div>
+    </div>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      ${[['Fleet utilisation', fleet.utilization_pct+'% on route','bar-chart-3'],
+         ['Fuel cost','TZS '+fmt(pnl.fuel_cost_tzs||0),'fuel'],
+         ['Trip count', String(r.trips_count||0),'route'],
+         ['Maintenance due', String(r.maintenance_due||0)+' items','wrench'],
+         ['Receivables','TZS '+fmt((r.receivables||{}).total_tzs||0),'users'],
+         ['P&L net','TZS '+fmt(pnl.net_tzs||0),'wallet']].map(([t,d,i]) => `
+        <div class="bg-white rounded-xl border p-5">
+          <div class="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center mb-3"><i data-lucide="${i}" class="w-5 h-5 text-brand-600"></i></div>
+          <div class="font-semibold">${t}</div>
+          <div class="text-lg font-bold text-slate-800 mt-1">${d}</div>
+        </div>`).join('')}
+    </div>
+    ${(r.alerts||[]).length ? `<div class="bg-amber-50 border border-amber-200 rounded-xl p-4">
+      <div class="font-semibold text-amber-900 mb-2">Alerts</div>
+      <ul class="text-sm text-amber-800 space-y-1">${r.alerts.slice(0,6).map(a=>`<li>${a.message}</li>`).join('')}</ul>
+    </div>` : ''}
   </div>`;
 }
 
@@ -1163,6 +1271,60 @@ async function removeTeamUser(id) {
   if (!confirm('Remove this user from the company?')) return;
   await api('/api/team/'+id, { method:'DELETE' });
   showPage('team');
+}
+
+
+
+async function loadExpensesBlock() {
+  try {
+    const { expenses, categories } = await api('/api/expenses');
+    return { expenses, categories };
+  } catch { return { expenses: [], categories: [] }; }
+}
+function printInvoice(invId) {
+  // find invoice data from last finance page - refetch
+  api('/api/invoices').then(({ invoices }) => {
+    const i = invoices.find(x => x.id === invId);
+    if (!i) return alert('Invoice not found');
+    const w = window.open('', '_blank', 'width=800,height=900');
+    w.document.write(`<!DOCTYPE html><html><head><title>${i.invoice_no}</title>
+      <style>body{font-family:system-ui;padding:40px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:24px}
+      td,th{padding:8px;border-bottom:1px solid #e2e8f0;text-align:left}.brand{font-size:22px;font-weight:700;color:#006fc7}
+      .muted{color:#64748b;font-size:13px}.total{font-size:18px;font-weight:700}@media print{button{display:none}}</style></head><body>
+      <div class="brand">MlimaniFleet</div>
+      <div class="muted">Tax invoice / cargo payment</div>
+      <h1 style="margin-top:24px">${i.invoice_no}</h1>
+      <p><strong>Client:</strong> ${i.client_name||'—'} ${i.client_phone?'· '+i.client_phone:''}</p>
+      <p><strong>Route:</strong> ${i.origin||''} → ${i.destination||''}</p>
+      <p><strong>Date:</strong> ${i.invoice_date||''} · <strong>Due:</strong> ${i.due_date||''}</p>
+      <p><strong>Terms:</strong> ${i.payment_terms}${i.credit_days?' ('+i.credit_days+' days)':''}</p>
+      <table><tr><th>Description</th><th>Amount (TZS)</th></tr>
+      <tr><td>${i.description||'Cargo transport'}</td><td>${Number(i.total_tzs||0).toLocaleString()}</td></tr>
+      <tr><td>Advance paid</td><td>${Number(i.advance_tzs||0).toLocaleString()}</td></tr>
+      <tr><td><strong>Balance due</strong></td><td class="total">${Number(i.balance_tzs||0).toLocaleString()}</td></tr>
+      </table>
+      <p class="muted" style="margin-top:32px">Status: ${i.status}</p>
+      <button onclick="window.print()" style="margin-top:24px;padding:10px 20px;background:#006fc7;color:#fff;border:0;border-radius:8px;cursor:pointer">Print</button>
+      </body></html>`);
+    w.document.close();
+  });
+}
+async function saveExpense() {
+  try {
+    await api('/api/expenses', { method:'POST', body: JSON.stringify({
+      category: document.getElementById('ex-cat').value,
+      description: document.getElementById('ex-desc').value,
+      amount_tzs: +document.getElementById('ex-amt').value,
+      expense_date: document.getElementById('ex-date').value,
+      vendor: document.getElementById('ex-vendor').value
+    })});
+    showPage('finance');
+  } catch(e) { alert(e.message); }
+}
+async function removeExpense(id) {
+  if (!confirm('Delete expense?')) return;
+  await api('/api/expenses/'+id, { method:'DELETE' });
+  showPage('finance');
 }
 
 

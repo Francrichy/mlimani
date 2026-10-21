@@ -17,6 +17,9 @@ const { initPg } = require('./pg');
 const fin = require('./finance');
 const gps = require('./gps');
 const team = require('./team');
+const inv = require('./inventory');
+const exp = require('./expenses');
+const mrules = require('./maint_rules');
 
 const PORT = process.env.PORT || 3847;
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -647,6 +650,97 @@ async function handleApi(req, res, pathname) {
     return send(res, 200, { positions: gps.livePositions(auth) });
   }
   // Public webhook for tracker push (secure with shared secret in production)
+
+  // ---------- Inventory ----------
+  if (pathname === '/api/inventory' && method === 'GET') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    return send(res, 200, { parts: inv.listParts(auth) });
+  }
+  if (pathname === '/api/inventory' && method === 'POST') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const body = await readBody(req);
+    try { return send(res, 201, { part: inv.createPart(auth, body) }); }
+    catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (pathname.startsWith('/api/inventory/') && method === 'PATCH') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const id = pathname.split('/')[3];
+    const body = await readBody(req);
+    const part = inv.updatePart(auth, id, body);
+    if (!part) return send(res, 404, { error: 'Not found' });
+    return send(res, 200, { part });
+  }
+  if (pathname.startsWith('/api/inventory/') && pathname.endsWith('/adjust') && method === 'POST') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const id = pathname.split('/')[3];
+    const body = await readBody(req);
+    const part = inv.adjustStock(auth, id, body.delta, body.reason);
+    if (!part) return send(res, 404, { error: 'Not found' });
+    return send(res, 200, { part });
+  }
+  if (pathname.startsWith('/api/inventory/') && method === 'DELETE') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const id = pathname.split('/')[3];
+    const ok = inv.deletePart(auth, id);
+    return send(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'Not found' });
+  }
+
+  // ---------- Operating expenses ----------
+  if (pathname === '/api/expenses' && method === 'GET') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    return send(res, 200, { expenses: exp.listExpenses(auth), categories: exp.CATEGORIES });
+  }
+  if (pathname === '/api/expenses' && method === 'POST') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const body = await readBody(req);
+    try { return send(res, 201, { expense: exp.createExpense(auth, body) }); }
+    catch (e) { return send(res, 400, { error: e.message }); }
+  }
+  if (pathname.startsWith('/api/expenses/') && method === 'DELETE') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const id = pathname.split('/')[3];
+    const ok = exp.deleteExpense(auth, id);
+    return send(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'Not found' });
+  }
+
+  // ---------- Maintenance rules (odometer) ----------
+  if (pathname === '/api/maintenance/rules' && method === 'GET') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    return send(res, 200, { rules: mrules.getRules(auth), due: mrules.vehicleDueList(auth) });
+  }
+  if (pathname === '/api/maintenance/due' && method === 'GET') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    return send(res, 200, { due: mrules.vehicleDueList(auth) });
+  }
+
+  // ---------- Reports snapshot ----------
+  if (pathname === '/api/reports/summary' && method === 'GET') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    const summary = fin.financeSummary(auth);
+    const vehicles = (require('./db').read('vehicles') || []).filter(v => auth.role === 'platform_admin' || v.company_id === auth.company_id);
+    const trips = (require('./db').read('trips') || []).filter(v => auth.role === 'platform_admin' || v.company_id === auth.company_id);
+    const onRoute = vehicles.filter(v => v.status === 'on_route' || v.status === 'on route').length;
+    const util = vehicles.length ? Math.round((onRoute / vehicles.length) * 100) : 0;
+    const due = mrules.vehicleDueList(auth).filter(d => d.status !== 'ok');
+    const parts = inv.listParts(auth);
+    const lowStock = parts.filter(p => p.stock <= p.min_stock);
+    return send(res, 200, {
+      pnl: summary.pnl,
+      payables: summary.payables,
+      receivables: summary.receivables,
+      alerts: summary.alerts,
+      fleet: {
+        total: vehicles.length,
+        on_route: onRoute,
+        workshop: vehicles.filter(v => v.status === 'workshop').length,
+        utilization_pct: util
+      },
+      trips_count: trips.length,
+      maintenance_due: due.length,
+      low_stock_parts: lowStock.length
+    });
+  }
+
   if (pathname === '/api/gps/webhook' && method === 'POST') {
     const secret = process.env.GPS_WEBHOOK_SECRET;
     if (secret && req.headers['x-gps-secret'] !== secret) {
@@ -711,6 +805,7 @@ seedIfEmpty();
     mod.seedModules(cos[0].id);
     fin.seedFinance(cos[0].id);
     gps.seedGps(cos[0].id);
+    inv.seedInventory(cos[0].id);
   }
 })();
 initPg().catch(e => console.warn('PG init', e.message));

@@ -3,6 +3,7 @@
  * receivables, payables, P&L summary, due alerts
  */
 const { read, write, uid, now } = require('./db');
+const expensesMod = require('./expenses');
 
 function companyFilter(list, auth) {
   if (!list) return [];
@@ -197,7 +198,8 @@ function financeSummary(auth) {
   const maintCost = maint.reduce((s, m) => s + (m.cost_tzs || 0), 0);
   const loansPaid = loans.reduce((s, l) => s + (l.amount_paid_tzs || 0), 0);
 
-  const expenses = fuelCost + maintCost;
+  const opEx = expensesMod.totalExpenses(auth);
+  const expenses = fuelCost + maintCost + opEx;
   const net = revenue - expenses;
 
   // Due soon (7 days)
@@ -213,6 +215,7 @@ function financeSummary(auth) {
       revenue_tzs: revenue,
       fuel_cost_tzs: fuelCost,
       maintenance_cost_tzs: maintCost,
+      operating_expenses_tzs: opEx,
       expenses_tzs: expenses,
       net_tzs: net,
       loans_repaid_tzs: loansPaid

@@ -132,6 +132,13 @@ function seedIfEmpty() {
     phone: '255712345678',
     email: 'demo@mlimanifleet.tz',
     subscription_status: 'active',
+    tin: '',
+    vrn: '',
+    address: 'Dar es Salaam, Tanzania',
+    city: 'Dar es Salaam',
+    vat_default: false,
+    invoice_footer: 'Thank you for your business',
+
     vehicle_limit: 10,
     current_vehicles: 3,
     next_billing_date: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
@@ -277,7 +284,31 @@ async function handleApi(req, res, pathname) {
   }
 
   // ---- COMPANY / BILLING ----
-  if (pathname === '/api/billing/summary' && method === 'GET') {
+  
+  // ---------- Company profile (TIN, address for invoices) ----------
+  if (pathname === '/api/company/profile' && method === 'GET') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!auth.company_id) return send(res, 400, { error: 'No company' });
+    const c = read('companies').find(x => x.id === auth.company_id);
+    if (!c) return send(res, 404, { error: 'Company not found' });
+    return send(res, 200, { company: c });
+  }
+  if (pathname === '/api/company/profile' && method === 'PUT') {
+    const auth = requireAuth(req, res); if (!auth) return;
+    if (!auth.company_id) return send(res, 400, { error: 'No company' });
+    if (auth.role !== 'fleet_manager' && auth.role !== 'platform_admin' && !(auth.permissions && auth.permissions.billing)) {
+      return send(res, 403, { error: 'No permission' });
+    }
+    const all = read('companies');
+    const i = all.findIndex(x => x.id === auth.company_id);
+    if (i < 0) return send(res, 404, { error: 'Not found' });
+    const fields = ['name','phone','email','address','city','tin','vrn','vat_default','invoice_footer'];
+    for (const f of fields) if (body[f] !== undefined) all[i][f] = body[f];
+    write('companies', all);
+    return send(res, 200, { company: all[i] });
+  }
+
+if (pathname === '/api/billing/summary' && method === 'GET') {
     const auth = requireAuth(req, res);
     if (!auth) return;
     if (auth.role === 'platform_admin') return send(res, 403, { error: 'Platform admin does not use company subscription plans' });
@@ -658,14 +689,12 @@ async function handleApi(req, res, pathname) {
   }
   if (pathname === '/api/inventory' && method === 'POST') {
     const auth = requireAuth(req, res); if (!auth) return;
-    const body = await readBody(req);
     try { return send(res, 201, { part: inv.createPart(auth, body) }); }
     catch (e) { return send(res, 400, { error: e.message }); }
   }
   if (pathname.startsWith('/api/inventory/') && method === 'PATCH') {
     const auth = requireAuth(req, res); if (!auth) return;
     const id = pathname.split('/')[3];
-    const body = await readBody(req);
     const part = inv.updatePart(auth, id, body);
     if (!part) return send(res, 404, { error: 'Not found' });
     return send(res, 200, { part });
@@ -673,7 +702,6 @@ async function handleApi(req, res, pathname) {
   if (pathname.startsWith('/api/inventory/') && pathname.endsWith('/adjust') && method === 'POST') {
     const auth = requireAuth(req, res); if (!auth) return;
     const id = pathname.split('/')[3];
-    const body = await readBody(req);
     const part = inv.adjustStock(auth, id, body.delta, body.reason);
     if (!part) return send(res, 404, { error: 'Not found' });
     return send(res, 200, { part });
@@ -692,7 +720,6 @@ async function handleApi(req, res, pathname) {
   }
   if (pathname === '/api/expenses' && method === 'POST') {
     const auth = requireAuth(req, res); if (!auth) return;
-    const body = await readBody(req);
     try { return send(res, 201, { expense: exp.createExpense(auth, body) }); }
     catch (e) { return send(res, 400, { error: e.message }); }
   }
@@ -716,16 +743,53 @@ async function handleApi(req, res, pathname) {
   // ---------- Reports snapshot ----------
   if (pathname === '/api/reports/summary' && method === 'GET') {
     const auth = requireAuth(req, res); if (!auth) return;
+    const q = url.parse(req.url, true).query || {};
+    const from = q.from || '';
+    const to = q.to || '';
+    const vehicleId = q.vehicle_id || '';
+    const driverId = q.driver_id || '';
+
     const summary = fin.financeSummary(auth);
     const vehicles = (require('./db').read('vehicles') || []).filter(v => auth.role === 'platform_admin' || v.company_id === auth.company_id);
-    const trips = (require('./db').read('trips') || []).filter(v => auth.role === 'platform_admin' || v.company_id === auth.company_id);
+    let trips = (require('./db').read('trips') || []).filter(v => auth.role === 'platform_admin' || v.company_id === auth.company_id);
+    let fuel = (require('./db').read('fuel_logs') || []).filter(v => auth.role === 'platform_admin' || v.company_id === auth.company_id);
+    let maint = (require('./db').read('maintenance') || []).filter(v => auth.role === 'platform_admin' || v.company_id === auth.company_id);
+    let invoices = (require('./db').read('client_invoices') || []).filter(v => auth.role === 'platform_admin' || v.company_id === auth.company_id);
+
+    const inRange = (dateStr) => {
+      if (!dateStr) return true;
+      const d = String(dateStr).slice(0, 10);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+      return true;
+    };
+    trips = trips.filter(t => inRange(t.start_date || t.created_at) && (!vehicleId || t.vehicle_id === vehicleId) && (!driverId || t.driver_id === driverId));
+    fuel = fuel.filter(f => inRange(f.date || f.created_at) && (!vehicleId || f.vehicle_id === vehicleId));
+    maint = maint.filter(m => inRange(m.due_date || m.created_at) && (!vehicleId || m.vehicle_id === vehicleId));
+    invoices = invoices.filter(i => inRange(i.invoice_date || i.created_at) && (!vehicleId || i.vehicle_id === vehicleId));
+
+    const tripRev = trips.reduce((s, t) => s + (t.revenue_tzs || 0), 0);
+    const invRev = invoices.reduce((s, i) => s + (i.amount_paid_tzs || 0), 0);
+    const fuelCost = fuel.reduce((s, f) => s + (f.cost_tzs || 0), 0);
+    const maintCost = maint.reduce((s, m) => s + (m.cost_tzs || 0), 0);
+
     const onRoute = vehicles.filter(v => v.status === 'on_route' || v.status === 'on route').length;
     const util = vehicles.length ? Math.round((onRoute / vehicles.length) * 100) : 0;
-    const due = mrules.vehicleDueList(auth).filter(d => d.status !== 'ok');
+    const due = mrules.vehicleDueList(auth).filter(d => d.status !== 'ok' && (!vehicleId || d.vehicle_id === vehicleId));
     const parts = inv.listParts(auth);
     const lowStock = parts.filter(p => p.stock <= p.min_stock);
+    const drivers = (require('./db').read('drivers') || []).filter(d => auth.role === 'platform_admin' || d.company_id === auth.company_id);
+
     return send(res, 200, {
-      pnl: summary.pnl,
+      filters: { from, to, vehicle_id: vehicleId, driver_id: driverId },
+      pnl: {
+        ...summary.pnl,
+        filtered_trip_revenue_tzs: tripRev,
+        filtered_invoice_collected_tzs: invRev,
+        filtered_fuel_cost_tzs: fuelCost,
+        filtered_maintenance_cost_tzs: maintCost,
+        filtered_net_tzs: (tripRev || invRev) - fuelCost - maintCost
+      },
       payables: summary.payables,
       receivables: summary.receivables,
       alerts: summary.alerts,
@@ -736,8 +800,14 @@ async function handleApi(req, res, pathname) {
         utilization_pct: util
       },
       trips_count: trips.length,
+      trips: trips.slice(0, 50),
+      fuel_logs: fuel.slice(0, 50),
+      maintenance_items: maint.slice(0, 50),
       maintenance_due: due.length,
-      low_stock_parts: lowStock.length
+      due_list: due.slice(0, 20),
+      low_stock_parts: lowStock.length,
+      vehicles,
+      drivers
     });
   }
 

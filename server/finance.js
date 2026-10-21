@@ -103,7 +103,11 @@ function createInvoice(auth, body) {
   if (terms === 'credit_days') dueDate = daysFrom(invDate, creditDays);
   else if (terms === 'on_delivery') dueDate = body.delivery_date || invDate;
 
-  const total = Number(body.total_tzs) || 0;
+  const subtotal = Number(body.subtotal_tzs != null ? body.subtotal_tzs : body.total_tzs) || 0;
+  const vatEnabled = body.vat_enabled === true || body.vat_enabled === 'true' || body.vat_enabled === 1;
+  const vatRate = vatEnabled ? (Number(body.vat_rate) || 18) : 0;
+  const vatAmount = Math.round(subtotal * vatRate / 100);
+  const total = subtotal + vatAmount;
   const advance = Number(body.advance_tzs) || 0;
   const inv = {
     id: uid(),
@@ -111,14 +115,19 @@ function createInvoice(auth, body) {
     invoice_no: body.invoice_no || `INV-${Date.now().toString().slice(-6)}`,
     client_name: body.client_name || '',
     client_phone: body.client_phone || '',
+    client_tin: body.client_tin || '',
     vehicle_id: body.vehicle_id || null,
     trip_id: body.trip_id || null,
     description: body.description || '',
     origin: body.origin || '',
     destination: body.destination || '',
+    subtotal_tzs: subtotal,
+    vat_enabled: vatEnabled,
+    vat_rate: vatRate,
+    vat_tzs: vatAmount,
     total_tzs: total,
     advance_tzs: advance,
-    amount_paid_tzs: advance, // advance counts as paid
+    amount_paid_tzs: advance,
     payment_terms: terms,
     credit_days: creditDays,
     invoice_date: invDate,

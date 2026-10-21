@@ -665,12 +665,43 @@ async function saveTrip() {
 }
 
 async function renderMaintenance() {
-  const [{ items }, { vehicles }] = await Promise.all([api('/api/maintenance'), api('/api/vehicles')]);
+  let items = [], vehicles = [], due = [];
+  try {
+    const [mRes, vRes, dRes] = await Promise.all([
+      api('/api/maintenance'),
+      api('/api/vehicles'),
+      api('/api/maintenance/due').catch(() => ({ due: [] }))
+    ]);
+    items = mRes.items || [];
+    vehicles = vRes.vehicles || [];
+    due = dRes.due || [];
+  } catch (err) {
+    return `<div class="page-enter p-6 bg-red-50 rounded-xl text-red-700">Could not load maintenance: ${err.message}</div>`;
+  }
   const vMap = Object.fromEntries(vehicles.map(v => [v.id, v.plate]));
+  const duePanel = `
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <div class="px-5 py-4 border-b">
+        <h3 class="font-semibold">Service by odometer</h3>
+        <p class="text-xs text-slate-500">Engine oil, filters, brakes — based on each truck’s km reading</p>
+      </div>
+      <div class="overflow-x-auto">
+      <table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
+        <th class="px-4 py-2">Vehicle</th><th class="py-2">Service</th><th class="py-2">Current km</th><th class="py-2">Due at km</th><th class="py-2">Remaining</th><th class="py-2">Status</th>
+      </tr></thead><tbody class="divide-y">
+        ${due.filter(d => d.status !== 'ok').slice(0,15).map(d => `<tr>
+          <td class="px-4 py-2 font-medium">${d.plate}</td>
+          <td class="py-2">${d.label}</td>
+          <td class="py-2">${fmt(d.current_odometer)}</td>
+          <td class="py-2">${fmt(d.next_due_odometer)}</td>
+          <td class="py-2">${d.km_remaining} km</td>
+          <td class="py-2"><span class="text-xs px-2 py-0.5 rounded ${d.status==='overdue'?'bg-red-50 text-red-700':d.status==='due_soon'?'bg-amber-50 text-amber-700':'bg-emerald-50 text-emerald-700'}">${String(d.status).replace('_',' ')}</span></td>
+        </tr>`).join('') || '<tr><td colspan="6" class="px-4 py-4 text-slate-400 text-center">All services within interval</td></tr>'}
+      </tbody></table></div>
+    </div>`;
   return `
   <div class="page-enter space-y-5">
     ${duePanel}
-
     <div class="flex justify-between">
       <p class="text-sm text-slate-500">${items.length} work order(s)</p>
       <button onclick="document.getElementById('mnt-form').classList.toggle('hidden')" class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2">
@@ -681,12 +712,20 @@ async function renderMaintenance() {
       <div class="grid sm:grid-cols-3 gap-3">
         <select id="m-vehicle" class="border rounded-lg px-3 py-2 text-sm"><option value="">Vehicle</option>${vehicles.map(v=>`<option value="${v.id}">${v.plate}</option>`).join('')}</select>
         <select id="m-type" class="border rounded-lg px-3 py-2 text-sm">
-          <option value="full_service">Full service</option><option value="oil_change">Oil change</option>
-          <option value="tyre_rotation">Tyre rotation</option><option value="repair">Repair</option>
+          <option value="engine_oil">Engine oil</option>
+          <option value="oil_filter">Oil filter</option>
+          <option value="air_filter">Air filter</option>
+          <option value="fuel_filter">Fuel filter</option>
+          <option value="tyre_rotation">Tyre rotation</option>
+          <option value="brake_inspection">Brake inspection</option>
+          <option value="full_service">Full service</option>
+          <option value="other">Other</option>
         </select>
-        <select id="m-priority" class="border rounded-lg px-3 py-2 text-sm"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
-        <input id="m-desc" placeholder="Description" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
+        <select id="m-priority" class="border rounded-lg px-3 py-2 text-sm">
+          <option value="medium">Medium</option><option value="high">High</option><option value="low">Low</option>
+        </select>
         <input id="m-due" type="date" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="m-desc" placeholder="Description" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
       </div>
       <button onclick="saveMaint()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm">Save</button>
     </div>
@@ -696,16 +735,15 @@ async function renderMaintenance() {
           <th class="px-5 py-3">Vehicle</th><th class="py-3">Type</th><th class="py-3">Description</th><th class="py-3">Due</th><th class="py-3">Priority</th><th class="py-3">Status</th><th class="py-3"></th>
         </tr></thead>
         <tbody class="divide-y">
-          ${items.map(m => `
-            <tr>
-              <td class="px-5 py-3 font-medium">${vMap[m.vehicle_id]||'—'}</td>
-              <td class="py-3">${m.type}</td>
-              <td class="py-3 text-slate-600">${m.description||''}</td>
-              <td class="py-3">${m.due_date||'—'}</td>
-              <td class="py-3"><span class="text-xs px-2 py-0.5 rounded ${m.priority==='high'?'bg-red-50 text-red-700':m.priority==='medium'?'bg-amber-50 text-amber-700':'bg-slate-100'}">${m.priority}</span></td>
-              <td class="py-3"><span class="text-xs px-2 py-0.5 rounded ${m.status==='overdue'?'bg-red-50 text-red-700':m.status==='completed'?'bg-emerald-50 text-emerald-700':'bg-blue-50 text-blue-700'}">${m.status}</span></td>
-              <td class="py-3 pr-5">${m.status!=='completed'?`<button onclick="completeMaint('${m.id}')" class="text-xs text-brand-600">Complete</button>`:''}</td>
-            </tr>`).join('') || '<tr><td colspan="7" class="px-5 py-10 text-center text-slate-400">No maintenance records</td></tr>'}
+          ${items.map(m => `<tr>
+            <td class="px-5 py-3 font-medium">${vMap[m.vehicle_id]||'—'}</td>
+            <td class="py-3 text-xs">${(m.type||'').replace(/_/g,' ')}</td>
+            <td class="py-3">${m.description||'—'}</td>
+            <td class="py-3">${m.due_date||'—'}</td>
+            <td class="py-3"><span class="text-xs px-2 py-0.5 rounded ${m.priority==='high'?'bg-red-50 text-red-700':m.priority==='low'?'bg-slate-100':'bg-amber-50 text-amber-700'}">${m.priority||'—'}</span></td>
+            <td class="py-3"><span class="text-xs px-2 py-0.5 rounded ${m.status==='completed'?'bg-emerald-50 text-emerald-700':m.status==='overdue'?'bg-red-50 text-red-700':'bg-blue-50 text-blue-700'}">${m.status||'—'}</span></td>
+            <td class="py-3 pr-3">${m.status!=='completed'?`<button onclick="completeMaint('${m.id}')" class="text-xs text-brand-600">Complete</button>`:''}</td>
+          </tr>`).join('') || '<tr><td colspan="7" class="px-5 py-10 text-center text-slate-400">No maintenance records</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -883,6 +921,8 @@ async function renderFinance() {
   ]);
   const opExpenses = expData.expenses || [];
   const expCats = expData.categories || ['office_rent','yard_rent','security','salaries','utilities','insurance','other'];
+  let co = currentCompany || {};
+  try { const pr = await api('/api/company/profile'); co = pr.company || co; } catch(e) {}
   const pnl = summary.pnl || {};
   const pay = summary.payables || {};
   const recv = summary.receivables || {};
@@ -896,6 +936,22 @@ async function renderFinance() {
         ${alerts.slice(0,8).map(a => `<li class="flex gap-2"><span class="text-xs px-1.5 py-0.5 rounded ${a.severity==='high'?'bg-red-100 text-red-700':'bg-amber-100'}">${a.severity}</span> ${a.message}</li>`).join('')}
       </ul>
     </div>` : ''}
+    <div class="bg-white rounded-xl border p-5">
+      <div class="flex justify-between items-center mb-3">
+        <div>
+          <h3 class="font-semibold">Company invoice details</h3>
+          <p class="text-xs text-slate-500">Shown on printed invoices (name, TIN, address)</p>
+        </div>
+      </div>
+      <div class="grid sm:grid-cols-3 gap-3">
+        <input id="co-name" value="${(co.name||'').replace(/"/g,'&quot;')}" placeholder="Company name" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="co-tin" value="${co.tin||''}" placeholder="TIN number" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="co-vrn" value="${co.vrn||''}" placeholder="VRN (VAT reg.)" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="co-phone" value="${co.phone||''}" placeholder="Phone" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="co-address" value="${(co.address||'').replace(/"/g,'&quot;')}" placeholder="Address" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
+      </div>
+      <button onclick="saveCompanyProfile()" class="mt-3 bg-slate-800 text-white text-sm px-4 py-2 rounded-lg">Save company details</button>
+    </div>
 
     <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
       <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Revenue (collected)</div><div class="text-2xl font-bold mt-1 text-emerald-600">TZS ${fmt(pnl.revenue_tzs||0)}</div></div>
@@ -953,7 +1009,8 @@ async function renderFinance() {
         <div id="inv-form" class="hidden p-4 border-b bg-slate-50 space-y-2">
           <div class="grid sm:grid-cols-2 gap-2">
             <input id="inv-client" placeholder="Client name" class="border rounded-lg px-3 py-2 text-sm">
-            <input id="inv-total" type="number" placeholder="Total TZS" class="border rounded-lg px-3 py-2 text-sm">
+            <input id="inv-client-tin" placeholder="Client TIN (optional)" class="border rounded-lg px-3 py-2 text-sm">
+            <input id="inv-total" type="number" placeholder="Subtotal TZS (before VAT)" class="border rounded-lg px-3 py-2 text-sm">
             <input id="inv-advance" type="number" placeholder="Advance paid TZS" class="border rounded-lg px-3 py-2 text-sm">
             <select id="inv-terms" class="border rounded-lg px-3 py-2 text-sm">
               <option value="advance">Full advance</option>
@@ -961,7 +1018,11 @@ async function renderFinance() {
               <option value="credit_days">Credit (days after)</option>
             </select>
             <input id="inv-credit" type="number" placeholder="Credit days" value="14" class="border rounded-lg px-3 py-2 text-sm">
-            <input id="inv-route" placeholder="Origin → Destination" class="border rounded-lg px-3 py-2 text-sm">
+            <input id="inv-route" placeholder="Origin → Destination" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
+            <label class="flex items-center gap-2 text-sm sm:col-span-2 cursor-pointer">
+              <input type="checkbox" id="inv-vat" class="rounded border-slate-300">
+              <span>Add VAT 18% (Tanzania)</span>
+            </label>
           </div>
           <button onclick="saveInvoice()" class="bg-brand-600 text-white px-3 py-1.5 rounded-lg text-sm">Save invoice</button>
         </div>
@@ -1054,10 +1115,14 @@ async function saveInvoice() {
     const route = (document.getElementById('inv-route').value||'').split('→').map(s=>s.trim());
     await api('/api/invoices', { method:'POST', body: JSON.stringify({
       client_name: document.getElementById('inv-client').value,
+      client_tin: document.getElementById('inv-client-tin')?.value || '',
+      subtotal_tzs: +document.getElementById('inv-total').value,
       total_tzs: +document.getElementById('inv-total').value,
       advance_tzs: +document.getElementById('inv-advance').value || 0,
       payment_terms: document.getElementById('inv-terms').value,
       credit_days: +document.getElementById('inv-credit').value || 0,
+      vat_enabled: !!(document.getElementById('inv-vat')?.checked),
+      vat_rate: 18,
       origin: route[0]||'',
       destination: route[1]||route[0]||''
     })});
@@ -1151,54 +1216,77 @@ async function removePart(id) {
 }
 
 async function renderReports() {
-  const r = await api('/api/reports/summary');
+  const vehicles = (await api('/api/vehicles').catch(() => ({ vehicles: [] }))).vehicles || [];
+  const drivers = (await api('/api/drivers').catch(() => ({ drivers: [] }))).drivers || [];
+  const from = document.getElementById('rpt-from')?.value || '';
+  const to = document.getElementById('rpt-to')?.value || '';
+  const vehicleId = document.getElementById('rpt-vehicle')?.value || '';
+  const driverId = document.getElementById('rpt-driver')?.value || '';
+  const qs = new URLSearchParams({ from, to, vehicle_id: vehicleId, driver_id: driverId });
+  const r = await api('/api/reports/summary?' + qs.toString());
   const pnl = r.pnl || {};
   const fleet = r.fleet || {};
   return `
   <div class="page-enter space-y-6">
-    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      <div class="bg-white rounded-xl border p-5">
-        <div class="text-xs text-slate-500 font-medium">Revenue</div>
-        <div class="text-2xl font-bold mt-1 text-emerald-600">TZS ${fmt(pnl.revenue_tzs||0)}</div>
+    <div class="bg-white rounded-xl border p-4 flex flex-wrap gap-3 items-end">
+      <div><label class="text-xs text-slate-500">From</label><input id="rpt-from" type="date" value="${from}" class="block border rounded-lg px-3 py-2 text-sm mt-1"></div>
+      <div><label class="text-xs text-slate-500">To</label><input id="rpt-to" type="date" value="${to}" class="block border rounded-lg px-3 py-2 text-sm mt-1"></div>
+      <div><label class="text-xs text-slate-500">Truck / vehicle</label>
+        <select id="rpt-vehicle" class="block border rounded-lg px-3 py-2 text-sm mt-1 min-w-[140px]">
+          <option value="">All vehicles</option>
+          ${vehicles.map(v => `<option value="${v.id}" ${vehicleId===v.id?'selected':''}>${v.plate}</option>`).join('')}
+        </select>
       </div>
-      <div class="bg-white rounded-xl border p-5">
-        <div class="text-xs text-slate-500 font-medium">Total expenses</div>
-        <div class="text-2xl font-bold mt-1">TZS ${fmt(pnl.expenses_tzs||0)}</div>
-        <div class="text-xs text-slate-400 mt-1">Fuel ${fmt(pnl.fuel_cost_tzs||0)} · Maint ${fmt(pnl.maintenance_cost_tzs||0)} · Ops ${fmt(pnl.operating_expenses_tzs||0)}</div>
+      <div><label class="text-xs text-slate-500">Driver</label>
+        <select id="rpt-driver" class="block border rounded-lg px-3 py-2 text-sm mt-1 min-w-[140px]">
+          <option value="">All drivers</option>
+          ${drivers.map(d => `<option value="${d.id}" ${driverId===d.id?'selected':''}>${d.name}</option>`).join('')}
+        </select>
       </div>
-      <div class="bg-white rounded-xl border p-5">
-        <div class="text-xs text-slate-500 font-medium">Net P&amp;L</div>
-        <div class="text-2xl font-bold mt-1 ${(pnl.net_tzs||0)>=0?'text-emerald-600':'text-red-600'}">TZS ${fmt(pnl.net_tzs||0)}</div>
-      </div>
-      <div class="bg-white rounded-xl border p-5">
-        <div class="text-xs text-slate-500 font-medium">Fleet utilisation</div>
-        <div class="text-2xl font-bold mt-1">${fleet.utilization_pct||0}%</div>
-        <div class="text-xs text-slate-400 mt-1">${fleet.on_route||0} on route / ${fleet.total||0} vehicles</div>
-      </div>
+      <button onclick="showPage('reports')" class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg">Apply filter</button>
+      <button onclick="printReport()" class="border text-sm px-4 py-2 rounded-lg">Print summary</button>
+    </div>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4" id="report-summary-cards">
+      <div class="bg-white rounded-xl border p-5"><div class="text-xs text-slate-500">Revenue (filtered)</div><div class="text-2xl font-bold mt-1 text-emerald-600">TZS ${fmt(pnl.filtered_trip_revenue_tzs||pnl.filtered_invoice_collected_tzs||pnl.revenue_tzs||0)}</div></div>
+      <div class="bg-white rounded-xl border p-5"><div class="text-xs text-slate-500">Expenses (filtered)</div><div class="text-2xl font-bold mt-1">TZS ${fmt((pnl.filtered_fuel_cost_tzs||0)+(pnl.filtered_maintenance_cost_tzs||0))}</div>
+        <div class="text-xs text-slate-400 mt-1">Fuel ${fmt(pnl.filtered_fuel_cost_tzs||0)} · Maint ${fmt(pnl.filtered_maintenance_cost_tzs||0)}</div></div>
+      <div class="bg-white rounded-xl border p-5"><div class="text-xs text-slate-500">Net (filtered)</div><div class="text-2xl font-bold mt-1 ${(pnl.filtered_net_tzs||0)>=0?'text-emerald-600':'text-red-600'}">TZS ${fmt(pnl.filtered_net_tzs||pnl.net_tzs||0)}</div></div>
+      <div class="bg-white rounded-xl border p-5"><div class="text-xs text-slate-500">Fleet utilisation</div><div class="text-2xl font-bold mt-1">${fleet.utilization_pct||0}%</div>
+        <div class="text-xs text-slate-400 mt-1">${fleet.on_route||0}/${fleet.total||0} on route</div></div>
     </div>
     <div class="grid sm:grid-cols-3 gap-4">
+      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Trips in period</div><div class="text-xl font-bold mt-1">${r.trips_count||0}</div></div>
       <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Debt to suppliers</div><div class="text-xl font-bold mt-1 text-red-600">TZS ${fmt((r.payables||{}).total_tzs||0)}</div></div>
       <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Debt from clients</div><div class="text-xl font-bold mt-1 text-brand-700">TZS ${fmt((r.receivables||{}).total_tzs||0)}</div></div>
-      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Maint due · Low stock</div><div class="text-xl font-bold mt-1">${r.maintenance_due||0} · ${r.low_stock_parts||0}</div></div>
     </div>
-    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-      ${[['Fleet utilisation', fleet.utilization_pct+'% on route','bar-chart-3'],
-         ['Fuel cost','TZS '+fmt(pnl.fuel_cost_tzs||0),'fuel'],
-         ['Trip count', String(r.trips_count||0),'route'],
-         ['Maintenance due', String(r.maintenance_due||0)+' items','wrench'],
-         ['Receivables','TZS '+fmt((r.receivables||{}).total_tzs||0),'users'],
-         ['P&L net','TZS '+fmt(pnl.net_tzs||0),'wallet']].map(([t,d,i]) => `
-        <div class="bg-white rounded-xl border p-5">
-          <div class="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center mb-3"><i data-lucide="${i}" class="w-5 h-5 text-brand-600"></i></div>
-          <div class="font-semibold">${t}</div>
-          <div class="text-lg font-bold text-slate-800 mt-1">${d}</div>
-        </div>`).join('')}
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <div class="px-5 py-3 border-b font-semibold text-sm">Trips in filter</div>
+      <table class="w-full text-sm"><thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
+        <th class="px-4 py-2">Route</th><th class="py-2">Revenue</th><th class="py-2">Status</th>
+      </tr></thead><tbody class="divide-y">
+        ${(r.trips||[]).slice(0,15).map(t => `<tr><td class="px-4 py-2">${t.route||t.origin||'—'} → ${t.destination||''}</td>
+          <td class="py-2">TZS ${fmt(t.revenue_tzs||0)}</td><td class="py-2">${t.status||'—'}</td></tr>`).join('') || '<tr><td colspan="3" class="px-4 py-6 text-center text-slate-400">No trips in range</td></tr>'}
+      </tbody></table>
     </div>
-    ${(r.alerts||[]).length ? `<div class="bg-amber-50 border border-amber-200 rounded-xl p-4">
-      <div class="font-semibold text-amber-900 mb-2">Alerts</div>
-      <ul class="text-sm text-amber-800 space-y-1">${r.alerts.slice(0,6).map(a=>`<li>${a.message}</li>`).join('')}</ul>
-    </div>` : ''}
   </div>`;
+}
+function printReport() {
+  const cards = document.getElementById('report-summary-cards');
+  const from = document.getElementById('rpt-from')?.value || '—';
+  const to = document.getElementById('rpt-to')?.value || '—';
+  const w = window.open('', '_blank', 'width=900,height=1000');
+  w.document.write(`<!DOCTYPE html><html><head><title>Fleet Report</title>
+    <style>body{font-family:system-ui;padding:32px}h1{color:#0c8ce9}.muted{color:#64748b}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:24px 0}
+    .card{border:1px solid #e2e8f0;border-radius:12px;padding:16px}.card div:first-child{font-size:12px;color:#64748b}
+    .card div:last-child{font-size:22px;font-weight:700;margin-top:4px}
+    @media print{button{display:none}}</style></head><body>
+    <h1>MlimaniFleet — Report summary</h1>
+    <p class="muted">Period: ${from} to ${to} · Printed ${new Date().toLocaleString()}</p>
+    <div class="grid">${cards ? cards.innerHTML : ''}</div>
+    <button onclick="window.print()" style="padding:10px 20px;background:#0c8ce9;color:#fff;border:0;border-radius:8px">Print</button>
+    </body></html>`);
+  w.document.close();
 }
 
 
@@ -1281,34 +1369,75 @@ async function loadExpensesBlock() {
     return { expenses, categories };
   } catch { return { expenses: [], categories: [] }; }
 }
-function printInvoice(invId) {
-  // find invoice data from last finance page - refetch
-  api('/api/invoices').then(({ invoices }) => {
-    const i = invoices.find(x => x.id === invId);
-    if (!i) return alert('Invoice not found');
-    const w = window.open('', '_blank', 'width=800,height=900');
-    w.document.write(`<!DOCTYPE html><html><head><title>${i.invoice_no}</title>
-      <style>body{font-family:system-ui;padding:40px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:24px}
-      td,th{padding:8px;border-bottom:1px solid #e2e8f0;text-align:left}.brand{font-size:22px;font-weight:700;color:#006fc7}
-      .muted{color:#64748b;font-size:13px}.total{font-size:18px;font-weight:700}@media print{button{display:none}}</style></head><body>
-      <div class="brand">MlimaniFleet</div>
-      <div class="muted">Tax invoice / cargo payment</div>
-      <h1 style="margin-top:24px">${i.invoice_no}</h1>
-      <p><strong>Client:</strong> ${i.client_name||'—'} ${i.client_phone?'· '+i.client_phone:''}</p>
-      <p><strong>Route:</strong> ${i.origin||''} → ${i.destination||''}</p>
-      <p><strong>Date:</strong> ${i.invoice_date||''} · <strong>Due:</strong> ${i.due_date||''}</p>
-      <p><strong>Terms:</strong> ${i.payment_terms}${i.credit_days?' ('+i.credit_days+' days)':''}</p>
-      <table><tr><th>Description</th><th>Amount (TZS)</th></tr>
-      <tr><td>${i.description||'Cargo transport'}</td><td>${Number(i.total_tzs||0).toLocaleString()}</td></tr>
-      <tr><td>Advance paid</td><td>${Number(i.advance_tzs||0).toLocaleString()}</td></tr>
-      <tr><td><strong>Balance due</strong></td><td class="total">${Number(i.balance_tzs||0).toLocaleString()}</td></tr>
-      </table>
-      <p class="muted" style="margin-top:32px">Status: ${i.status}</p>
-      <button onclick="window.print()" style="margin-top:24px;padding:10px 20px;background:#006fc7;color:#fff;border:0;border-radius:8px;cursor:pointer">Print</button>
-      </body></html>`);
-    w.document.close();
-  });
+async function printInvoice(invId) {
+  const [{ invoices }, profile] = await Promise.all([
+    api('/api/invoices'),
+    api('/api/company/profile').catch(() => ({ company: currentCompany || {} }))
+  ]);
+  const i = invoices.find(x => x.id === invId);
+  if (!i) return alert('Invoice not found');
+  const c = profile.company || currentCompany || {};
+  const sub = i.subtotal_tzs != null ? i.subtotal_tzs : (i.total_tzs - (i.vat_tzs || 0));
+  const vat = i.vat_tzs || 0;
+  const w = window.open('', '_blank', 'width=820,height=960');
+  w.document.write(`<!DOCTYPE html><html><head><title>${i.invoice_no}</title>
+    <style>
+      body{font-family:Inter,system-ui,sans-serif;padding:40px;color:#0f172a;max-width:720px;margin:0 auto}
+      .head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0c8ce9;padding-bottom:16px;margin-bottom:24px}
+      .co-name{font-size:22px;font-weight:700;color:#0c8ce9}
+      .muted{color:#64748b;font-size:13px;line-height:1.5}
+      table{width:100%;border-collapse:collapse;margin-top:20px}
+      th,td{padding:10px 8px;border-bottom:1px solid #e2e8f0;text-align:left;font-size:14px}
+      th{background:#f8fafc;font-size:12px;color:#64748b;text-transform:uppercase}
+      .total{font-size:18px;font-weight:700}
+      .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;background:#f1f5f9}
+      @media print{button{display:none}body{padding:20px}}
+    </style></head><body>
+    <div class="head">
+      <div>
+        <div class="co-name">${c.name || 'Fleet Company'}</div>
+        <div class="muted">
+          ${c.address || ''}${c.city ? ', '+c.city : ''}<br>
+          ${c.phone ? 'Tel: '+c.phone+'<br>' : ''}
+          ${c.email ? c.email+'<br>' : ''}
+          ${c.tin ? '<strong>TIN:</strong> '+c.tin+'<br>' : ''}
+          ${c.vrn ? '<strong>VRN:</strong> '+c.vrn : ''}
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:20px;font-weight:700">INVOICE</div>
+        <div class="muted">${i.invoice_no}<br>${i.invoice_date || ''}</div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;gap:24px;margin-bottom:16px">
+      <div>
+        <div class="muted" style="margin-bottom:4px">BILL TO</div>
+        <div style="font-weight:600">${i.client_name || '—'}</div>
+        <div class="muted">${i.client_phone || ''}${i.client_tin ? '<br>TIN: '+i.client_tin : ''}</div>
+      </div>
+      <div class="muted" style="text-align:right">
+        <div><strong>Route:</strong> ${i.origin || '—'} → ${i.destination || '—'}</div>
+        <div><strong>Terms:</strong> ${i.payment_terms || ''}${i.credit_days ? ' ('+i.credit_days+' days)' : ''}</div>
+        <div><strong>Due date:</strong> ${i.due_date || '—'}</div>
+        <div><span class="badge">${i.status || ''}</span></div>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Description</th><th style="text-align:right">Amount (TZS)</th></tr></thead>
+      <tbody>
+        <tr><td>${i.description || 'Cargo transport services'}</td><td style="text-align:right">${Number(sub).toLocaleString()}</td></tr>
+        ${i.vat_enabled || vat ? `<tr><td>VAT (${i.vat_rate || 18}%)</td><td style="text-align:right">${Number(vat).toLocaleString()}</td></tr>` : ''}
+        <tr><td><strong>Total</strong></td><td style="text-align:right" class="total">${Number(i.total_tzs||0).toLocaleString()}</td></tr>
+        <tr><td>Advance paid</td><td style="text-align:right">${Number(i.advance_tzs||0).toLocaleString()}</td></tr>
+        <tr><td><strong>Balance due</strong></td><td style="text-align:right" class="total">${Number(i.balance_tzs||0).toLocaleString()}</td></tr>
+      </tbody>
+    </table>
+    <p class="muted" style="margin-top:32px">${c.invoice_footer || 'Thank you for your business.'}</p>
+    <button onclick="window.print()" style="margin-top:24px;padding:10px 20px;background:#0c8ce9;color:#fff;border:0;border-radius:8px;cursor:pointer">Print / Save PDF</button>
+    </body></html>`);
+  w.document.close();
 }
+
 async function saveExpense() {
   try {
     await api('/api/expenses', { method:'POST', body: JSON.stringify({

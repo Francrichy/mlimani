@@ -1168,117 +1168,251 @@ async function renderInventory() {
   const moves = invRes.moves || [];
   const summary = invRes.summary || {};
   const vehicles = vehRes.vehicles || [];
-  const low = parts.filter(x => x.stock <= x.min_stock).length;
-  const partOpts = parts.map(x => `<option value="${x.id}">${x.sku} — ${x.name} (${x.stock} ${x.unit||''})</option>`).join('');
+  const lowParts = parts.filter(x => Number(x.stock) <= Number(x.min_stock));
+  const maxStock = Math.max(1, ...parts.map(p => Number(p.stock) || 0));
+  const byCat = {};
+  parts.forEach(p => {
+    const c = p.category || 'general';
+    byCat[c] = (byCat[c] || 0) + (Number(p.stock) || 0);
+  });
+  const catEntries = Object.entries(byCat).sort((a,b) => b[1]-a[1]);
+  const maxCat = Math.max(1, ...catEntries.map(x => x[1]));
+  const recentIssues = moves.filter(m => m.type === 'issue').slice(0, 8);
+  const recentRecv = moves.filter(m => m.type === 'receive').slice(0, 8);
+  const partOpts = parts.map(x => `<option value="${x.id}">${esc(x.sku)} — ${esc(x.name)} (qty ${Number(x.stock)||0})</option>`).join('');
+  const vehOpts = vehicles.map(v => `<option value="${v.id}" data-plate="${esc(v.plate)}">${esc(v.plate)}</option>`).join('');
 
   return `
-  <div class="page-enter space-y-5">
-    <div class="grid sm:grid-cols-4 gap-4">
-      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">SKUs in store</div><div class="text-2xl font-bold mt-1">${summary.total_skus||parts.length}</div></div>
-      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Low stock</div><div class="text-2xl font-bold mt-1 ${low?'text-red-600':''}">${summary.low_stock||low}</div></div>
-      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Stock value</div><div class="text-2xl font-bold mt-1">TZS ${fmt(summary.stock_value_tzs||0)}</div></div>
-      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Issued today</div><div class="text-2xl font-bold mt-1">${summary.issues_today||0} <span class="text-sm font-normal text-slate-400">(${summary.qty_issued_today||0} units)</span></div></div>
-    </div>
-
-    <div class="flex flex-wrap gap-2">
-      <button onclick="document.getElementById('wh-issue').classList.toggle('hidden');document.getElementById('wh-receive').classList.add('hidden');document.getElementById('wh-add').classList.add('hidden')" class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg font-medium">Issue parts</button>
-      <button onclick="document.getElementById('wh-receive').classList.toggle('hidden');document.getElementById('wh-issue').classList.add('hidden');document.getElementById('wh-add').classList.add('hidden')" class="bg-emerald-600 text-white text-sm px-4 py-2 rounded-lg font-medium">Receive stock</button>
-      <button onclick="document.getElementById('wh-add').classList.toggle('hidden');document.getElementById('wh-issue').classList.add('hidden');document.getElementById('wh-receive').classList.add('hidden')" class="border text-sm px-4 py-2 rounded-lg">Add new part</button>
-    </div>
-
-    <!-- ISSUE -->
-    <div id="wh-issue" class="hidden bg-white rounded-xl border p-5 space-y-3 border-brand-200">
-      <h3 class="font-semibold text-brand-800">Issue parts from warehouse</h3>
-      <p class="text-xs text-slate-500">Storeman issues oil, filters, tyres etc. to a truck or mechanic</p>
-      <div class="grid sm:grid-cols-2 gap-3">
-        <select id="iss-part" class="border rounded-lg px-3 py-2 text-sm"><option value="">Select part *</option>${partOpts}</select>
-        <input id="iss-qty" type="number" min="1" placeholder="Quantity *" class="border rounded-lg px-3 py-2 text-sm">
-        <select id="iss-vehicle" class="border rounded-lg px-3 py-2 text-sm">
-          <option value="">Vehicle (optional)</option>
-          ${vehicles.map(v => `<option value="${v.id}" data-plate="${v.plate}">${v.plate}</option>`).join('')}
-        </select>
-        <input id="iss-to" placeholder="Issued to (mechanic / driver)" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="iss-reason" placeholder="Reason / job (e.g. oil change)" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="iss-ref" placeholder="Job / WO reference" class="border rounded-lg px-3 py-2 text-sm">
+  <div class="page-enter space-y-6">
+    <!-- KPI row -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 shadow-lg">
+        <div class="text-xs uppercase tracking-wide text-slate-400 font-medium">Store SKUs</div>
+        <div class="text-3xl font-bold mt-1">${parts.length}</div>
+        <div class="text-xs text-slate-400 mt-2">Registered parts</div>
       </div>
-      <button onclick="doIssuePart()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm">Confirm issue</button>
-    </div>
-
-    <!-- RECEIVE -->
-    <div id="wh-receive" class="hidden bg-white rounded-xl border p-5 space-y-3 border-emerald-200">
-      <h3 class="font-semibold text-emerald-800">Receive stock into warehouse</h3>
-      <div class="grid sm:grid-cols-2 gap-3">
-        <select id="rcv-part" class="border rounded-lg px-3 py-2 text-sm"><option value="">Select part *</option>${partOpts}</select>
-        <input id="rcv-qty" type="number" min="1" placeholder="Quantity received *" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="rcv-reason" placeholder="Supplier / GRN note" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="rcv-ref" placeholder="Invoice / delivery note no." class="border rounded-lg px-3 py-2 text-sm">
+      <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+        <div class="text-xs uppercase tracking-wide text-slate-500 font-medium">Stock value</div>
+        <div class="text-2xl font-bold mt-1 text-slate-900">TZS ${fmt(summary.stock_value_tzs||0)}</div>
+        <div class="text-xs text-slate-400 mt-2">At unit cost</div>
       </div>
-      <button onclick="doReceivePart()" class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm">Confirm receive</button>
+      <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+        <div class="text-xs uppercase tracking-wide text-slate-500 font-medium">Reorder alerts</div>
+        <div class="text-3xl font-bold mt-1 ${lowParts.length?'text-red-600':'text-emerald-600'}">${lowParts.length}</div>
+        <div class="text-xs text-slate-400 mt-2">Below minimum</div>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+        <div class="text-xs uppercase tracking-wide text-slate-500 font-medium">Issued today</div>
+        <div class="text-3xl font-bold mt-1 text-brand-700">${summary.issues_today||0}</div>
+        <div class="text-xs text-slate-400 mt-2">${summary.qty_issued_today||0} units out</div>
+      </div>
     </div>
 
-    <!-- ADD PART -->
-    <div id="wh-add" class="hidden bg-white rounded-xl border p-5 space-y-3">
-      <h3 class="font-semibold">Register new part in store</h3>
-      <div class="grid sm:grid-cols-3 gap-3">
-        <input id="ip-sku" placeholder="SKU" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="ip-name" placeholder="Part name *" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
-        <select id="ip-cat" class="border rounded-lg px-3 py-2 text-sm">
+    <!-- Actions -->
+    <div class="flex flex-wrap gap-2 items-center">
+      <button onclick="whShowPanel('issue')" class="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm">
+        <i data-lucide="arrow-up-right" class="w-4 h-4"></i> Issue to vehicle
+      </button>
+      <button onclick="whShowPanel('receive')" class="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm">
+        <i data-lucide="package-plus" class="w-4 h-4"></i> Receive goods
+      </button>
+      <button onclick="whShowPanel('add')" class="inline-flex items-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-sm font-medium px-4 py-2.5 rounded-xl">
+        <i data-lucide="plus" class="w-4 h-4"></i> New part
+      </button>
+      <button onclick="printWarehouseReport()" class="inline-flex items-center gap-2 ml-auto bg-slate-800 hover:bg-slate-900 text-white text-sm font-medium px-4 py-2.5 rounded-xl">
+        <i data-lucide="printer" class="w-4 h-4"></i> Print stock report
+      </button>
+    </div>
+
+    <!-- Panels -->
+    <div id="wh-issue" class="hidden bg-white rounded-2xl border border-brand-100 shadow-sm p-6">
+      <h3 class="font-semibold text-lg text-slate-900 mb-1">Issue parts from store</h3>
+      <p class="text-sm text-slate-500 mb-4">Reduce stock when parts leave the warehouse for a truck or job</p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <select id="iss-part" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm"><option value="">Select part *</option>${partOpts}</select>
+        <input id="iss-qty" type="number" min="1" placeholder="Quantity *" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        <select id="iss-vehicle" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm"><option value="">Vehicle</option>${vehOpts}</select>
+        <input id="iss-to" placeholder="Issued to (mechanic)" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        <input id="iss-reason" placeholder="Job / reason" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        <input id="iss-ref" placeholder="WO / reference" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+      </div>
+      <button onclick="doIssuePart()" class="mt-4 bg-brand-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold">Confirm issue</button>
+    </div>
+
+    <div id="wh-receive" class="hidden bg-white rounded-2xl border border-emerald-100 shadow-sm p-6">
+      <h3 class="font-semibold text-lg text-slate-900 mb-1">Receive goods into store</h3>
+      <p class="text-sm text-slate-500 mb-4">Increase stock when delivery arrives from supplier</p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <select id="rcv-part" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm sm:col-span-2"><option value="">Select part *</option>${partOpts}</select>
+        <input id="rcv-qty" type="number" min="1" placeholder="Qty received *" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        <input id="rcv-ref" placeholder="GRN / invoice no." class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        <input id="rcv-reason" placeholder="Supplier / note" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm sm:col-span-2">
+      </div>
+      <button onclick="doReceivePart()" class="mt-4 bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold">Confirm receive</button>
+    </div>
+
+    <div id="wh-add" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+      <h3 class="font-semibold text-lg text-slate-900 mb-1">Register new part</h3>
+      <p class="text-sm text-slate-500 mb-4">Creates the item at <strong>0 qty</strong>. Use <em>Receive goods</em> to add stock.</p>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <input id="ip-sku" placeholder="SKU (optional)" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        <input id="ip-name" placeholder="Part name *" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm sm:col-span-2">
+        <select id="ip-cat" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
           <option value="oil">Engine oil</option><option value="filter">Filter</option>
           <option value="tyre">Tyre</option><option value="brake">Brake</option>
           <option value="battery">Battery</option><option value="general">General</option>
         </select>
-        <input id="ip-stock" type="number" placeholder="Opening stock" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="ip-min" type="number" placeholder="Min stock level" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="ip-unit" placeholder="Unit" value="pcs" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="ip-cost" type="number" placeholder="Unit cost TZS" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="ip-location" placeholder="Shelf / location" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="ip-supplier" placeholder="Supplier" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="ip-min" type="number" min="0" placeholder="Reorder level (min)" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        <input id="ip-unit" placeholder="Unit" value="pcs" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        <input id="ip-cost" type="number" min="0" placeholder="Unit cost TZS" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        <input id="ip-location" placeholder="Shelf / bin location" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        <input id="ip-supplier" placeholder="Preferred supplier" class="border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
       </div>
-      <button onclick="saveInventoryPart()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm">Save part</button>
+      <button onclick="saveInventoryPart()" class="mt-4 bg-slate-900 text-white px-5 py-2.5 rounded-xl text-sm font-semibold">Save part (qty = 0)</button>
     </div>
 
-    <div class="bg-white rounded-xl border overflow-hidden">
-      <div class="px-5 py-3 border-b font-semibold text-sm">Store stock</div>
-      <table class="w-full text-sm">
-        <thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
-          <th class="px-5 py-3">SKU</th><th class="py-3">Part</th><th class="py-3">Location</th><th class="py-3">Stock</th><th class="py-3">Min</th><th class="py-3">Status</th><th class="py-3"></th>
-        </tr></thead>
-        <tbody class="divide-y">
-          ${parts.map(x => `<tr>
-            <td class="px-5 py-3 font-mono text-xs">${x.sku}</td>
-            <td class="py-3 font-medium">${x.name}<div class="text-xs text-slate-400">${x.category||''}</div></td>
-            <td class="py-3 text-xs text-slate-500">${x.location||'—'}</td>
-            <td class="py-3 font-semibold">${x.stock} ${x.unit||''}</td>
-            <td class="py-3 text-slate-500">${x.min_stock}</td>
-            <td class="py-3">${x.stock<=x.min_stock?'<span class="text-xs px-2 py-0.5 rounded bg-red-50 text-red-700">Reorder</span>':'<span class="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">OK</span>'}</td>
-            <td class="py-3 pr-3"><button onclick="quickIssue('${x.id}')" class="text-xs text-brand-600 font-medium">Issue</button></td>
-          </tr>`).join('') || '<tr><td colspan="7" class="px-5 py-8 text-center text-slate-400">No parts — add parts to open the store</td></tr>'}
-        </tbody>
-      </table>
+    <!-- Charts + low stock -->
+    <div class="grid lg:grid-cols-3 gap-5">
+      <div class="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-semibold text-slate-900">Stock by part</h3>
+          <span class="text-xs text-slate-400">Qty on hand</span>
+        </div>
+        <div class="space-y-3 max-h-72 overflow-y-auto pr-1">
+          ${parts.slice().sort((a,b)=>(Number(b.stock)||0)-(Number(a.stock)||0)).slice(0,12).map(p => {
+            const qty = Number(p.stock)||0;
+            const pct = Math.round((qty / maxStock) * 100);
+            const danger = qty <= Number(p.min_stock);
+            return `<div>
+              <div class="flex justify-between text-sm mb-1">
+                <span class="font-medium text-slate-700 truncate max-w-[60%]">${esc(p.name)}</span>
+                <span class="font-semibold ${danger?'text-red-600':'text-slate-800'}">${qty} <span class="text-xs font-normal text-slate-400">${esc(p.unit||'pcs')}</span></span>
+              </div>
+              <div class="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                <div class="h-full rounded-full ${danger?'bg-red-500':'bg-brand-500'}" style="width:${Math.max(pct,2)}%"></div>
+              </div>
+            </div>`;
+          }).join('') || '<p class="text-sm text-slate-400 py-8 text-center">No parts yet — add a part then receive stock</p>'}
+        </div>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+        <h3 class="font-semibold text-slate-900 mb-4">By category</h3>
+        <div class="space-y-3">
+          ${catEntries.map(([c,q]) => {
+            const pct = Math.round((q/maxCat)*100);
+            return `<div>
+              <div class="flex justify-between text-xs mb-1"><span class="uppercase tracking-wide text-slate-500">${esc(c)}</span><span class="font-semibold">${q}</span></div>
+              <div class="h-2 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-violet-500 rounded-full" style="width:${Math.max(pct,3)}%"></div></div>
+            </div>`;
+          }).join('') || '<p class="text-sm text-slate-400">No data</p>'}
+        </div>
+        ${lowParts.length ? `<div class="mt-5 pt-4 border-t">
+          <div class="text-xs font-semibold text-red-600 uppercase mb-2">Reorder now</div>
+          <ul class="text-sm space-y-1">${lowParts.slice(0,5).map(p=>`<li class="flex justify-between"><span>${esc(p.name)}</span><span class="text-red-600 font-medium">${Number(p.stock)||0}/${Number(p.min_stock)||0}</span></li>`).join('')}</ul>
+        </div>` : ''}
+      </div>
     </div>
 
-    <div class="bg-white rounded-xl border overflow-hidden">
-      <div class="px-5 py-3 border-b font-semibold text-sm">Recent store movements</div>
-      <table class="w-full text-sm">
-        <thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
-          <th class="px-5 py-3">When</th><th class="py-3">Type</th><th class="py-3">Part</th><th class="py-3">Qty</th><th class="py-3">Vehicle / to</th><th class="py-3">Reason</th>
-        </tr></thead>
-        <tbody class="divide-y">
-          ${moves.slice(0,25).map(m => {
+    <!-- Stock table -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+        <h3 class="font-semibold text-slate-900">Store stock list</h3>
+        <span class="text-xs text-slate-400">${parts.length} items</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs uppercase tracking-wide text-slate-500 bg-slate-50 border-b">
+              <th class="px-5 py-3">SKU</th>
+              <th class="py-3">Part</th>
+              <th class="py-3">Location</th>
+              <th class="py-3 text-right">Qty on hand</th>
+              <th class="py-3 text-right">Reorder at</th>
+              <th class="py-3">Status</th>
+              <th class="py-3 pr-5"></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            ${parts.map(x => {
+              const qty = Number(x.stock) || 0;
+              const min = Number(x.min_stock) || 0;
+              const low = qty <= min;
+              return `<tr class="hover:bg-slate-50/80">
+                <td class="px-5 py-3 font-mono text-xs text-slate-500">${esc(x.sku)}</td>
+                <td class="py-3">
+                  <div class="font-medium text-slate-900">${esc(x.name)}</div>
+                  <div class="text-xs text-slate-400 capitalize">${esc(x.category||'')}</div>
+                </td>
+                <td class="py-3 text-xs text-slate-500">${esc(x.location||'—')}</td>
+                <td class="py-3 text-right">
+                  <span class="text-base font-bold text-slate-900">${qty}</span>
+                  <span class="text-xs text-slate-400 ml-1">${esc(x.unit||'pcs')}</span>
+                </td>
+                <td class="py-3 text-right text-slate-500">${min}</td>
+                <td class="py-3">${low
+                  ? '<span class="inline-flex text-xs font-semibold px-2.5 py-1 rounded-full bg-red-50 text-red-700">Reorder</span>'
+                  : '<span class="inline-flex text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700">OK</span>'}</td>
+                <td class="py-3 pr-5 text-right space-x-2 whitespace-nowrap">
+                  <button onclick="quickReceive('${x.id}')" class="text-xs font-medium text-emerald-600 hover:underline">+ Receive</button>
+                  <button onclick="quickIssue('${x.id}')" class="text-xs font-medium text-brand-600 hover:underline">Issue</button>
+                </td>
+              </tr>`;
+            }).join('') || '<tr><td colspan="7" class="px-5 py-12 text-center text-slate-400">No parts in store. Click <strong>New part</strong> then <strong>Receive goods</strong>.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Movements -->
+    <div class="grid lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b bg-emerald-50/50 font-semibold text-sm text-emerald-900">Recent receives</div>
+        <ul class="divide-y text-sm max-h-56 overflow-y-auto">
+          ${recentRecv.map(m => {
             const part = parts.find(p => p.id === m.part_id);
-            return `<tr>
-              <td class="px-5 py-2 text-xs text-slate-500">${(m.created_at||'').slice(0,16).replace('T',' ')}</td>
-              <td class="py-2"><span class="text-xs px-2 py-0.5 rounded ${m.type==='issue'?'bg-amber-50 text-amber-800':'bg-emerald-50 text-emerald-800'}">${m.type||'—'}</span></td>
-              <td class="py-2">${part ? part.sku : (m.part_id||'—').slice(0,8)}</td>
-              <td class="py-2 font-medium">${m.type==='issue'?'−':'+'}${m.qty||Math.abs(m.delta||0)}</td>
-              <td class="py-2 text-xs">${m.vehicle_plate||m.issued_to||'—'}</td>
-              <td class="py-2 text-xs text-slate-500">${m.reason||m.reference||'—'}</td>
-            </tr>`;
-          }).join('') || '<tr><td colspan="6" class="px-5 py-6 text-center text-slate-400">No movements yet</td></tr>'}
-        </tbody>
-      </table>
+            return `<li class="px-5 py-2.5 flex justify-between gap-2">
+              <span><span class="font-medium">+${m.qty||0}</span> ${esc(part?.name||'Part')}</span>
+              <span class="text-xs text-slate-400">${(m.created_at||'').slice(0,16).replace('T',' ')}</span>
+            </li>`;
+          }).join('') || '<li class="px-5 py-6 text-center text-slate-400">No receives yet</li>'}
+        </ul>
+      </div>
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b bg-amber-50/50 font-semibold text-sm text-amber-900">Recent issues</div>
+        <ul class="divide-y text-sm max-h-56 overflow-y-auto">
+          ${recentIssues.map(m => {
+            const part = parts.find(p => p.id === m.part_id);
+            return `<li class="px-5 py-2.5 flex justify-between gap-2">
+              <span><span class="font-medium text-amber-800">−${m.qty||0}</span> ${esc(part?.name||'Part')} ${m.vehicle_plate?'→ '+esc(m.vehicle_plate):''}</span>
+              <span class="text-xs text-slate-400">${(m.created_at||'').slice(0,16).replace('T',' ')}</span>
+            </li>`;
+          }).join('') || '<li class="px-5 py-6 text-center text-slate-400">No issues yet</li>'}
+        </ul>
+      </div>
     </div>
   </div>`;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function whShowPanel(which) {
+  ['issue','receive','add'].forEach(p => {
+    const el = document.getElementById('wh-' + p);
+    if (el) el.classList.toggle('hidden', p !== which);
+  });
+}
+function quickIssue(partId) {
+  whShowPanel('issue');
+  const sel = document.getElementById('iss-part');
+  if (sel) sel.value = partId;
+  document.getElementById('iss-qty')?.focus();
+}
+function quickReceive(partId) {
+  whShowPanel('receive');
+  const sel = document.getElementById('rcv-part');
+  if (sel) sel.value = partId;
+  document.getElementById('rcv-qty')?.focus();
 }
 async function doIssuePart() {
   try {
@@ -1298,36 +1432,68 @@ async function doIssuePart() {
 }
 async function doReceivePart() {
   try {
+    const qty = +document.getElementById('rcv-qty').value;
+    if (!qty || qty < 1) throw new Error('Enter quantity received');
     await api('/api/inventory/receive', { method:'POST', body: JSON.stringify({
       part_id: document.getElementById('rcv-part').value,
-      qty: +document.getElementById('rcv-qty').value,
-      reason: document.getElementById('rcv-reason').value,
+      qty,
+      reason: document.getElementById('rcv-reason').value || 'Goods received',
       reference: document.getElementById('rcv-ref').value
     })});
     showPage('inventory');
   } catch(e) { alert(e.message); }
 }
-function quickIssue(partId) {
-  document.getElementById('wh-issue').classList.remove('hidden');
-  document.getElementById('wh-receive').classList.add('hidden');
-  document.getElementById('wh-add').classList.add('hidden');
-  document.getElementById('iss-part').value = partId;
-  document.getElementById('iss-qty').focus();
-}
 async function saveInventoryPart() {
   try {
+    const name = (document.getElementById('ip-name')?.value || '').trim();
+    if (!name) throw new Error('Part name is required');
     await api('/api/inventory', { method:'POST', body: JSON.stringify({
       sku: document.getElementById('ip-sku').value,
-      name: document.getElementById('ip-name').value,
+      name,
       category: document.getElementById('ip-cat').value,
-      stock: +document.getElementById('ip-stock').value,
-      min_stock: +document.getElementById('ip-min').value,
-      unit: document.getElementById('ip-unit').value,
-      unit_cost_tzs: +document.getElementById('ip-cost').value,
+      min_stock: +document.getElementById('ip-min').value || 0,
+      unit: document.getElementById('ip-unit').value || 'pcs',
+      unit_cost_tzs: +document.getElementById('ip-cost').value || 0,
       location: document.getElementById('ip-location')?.value || '',
       supplier_name: document.getElementById('ip-supplier').value
     })});
     showPage('inventory');
+  } catch(e) { alert(e.message); }
+}
+async function printWarehouseReport() {
+  try {
+    const { parts, summary, moves } = await api('/api/inventory');
+    const co = currentCompany || {};
+    const w = window.open('', '_blank', 'width=900,height=1000');
+    const rows = (parts||[]).map(p => `<tr>
+      <td style="padding:8px;border-bottom:1px solid #e2e8f0;font-family:monospace;font-size:12px">${p.sku||''}</td>
+      <td style="padding:8px;border-bottom:1px solid #e2e8f0">${p.name||''}</td>
+      <td style="padding:8px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700">${Number(p.stock)||0}</td>
+      <td style="padding:8px;border-bottom:1px solid #e2e8f0">${p.unit||'pcs'}</td>
+      <td style="padding:8px;border-bottom:1px solid #e2e8f0;text-align:right">${Number(p.min_stock)||0}</td>
+      <td style="padding:8px;border-bottom:1px solid #e2e8f0">${p.location||'—'}</td>
+      <td style="padding:8px;border-bottom:1px solid #e2e8f0;text-align:right">${((Number(p.stock)||0)*(Number(p.unit_cost_tzs)||0)).toLocaleString()}</td>
+    </tr>`).join('');
+    w.document.write(`<!DOCTYPE html><html><head><title>Stock Report</title>
+      <style>body{font-family:Inter,system-ui,sans-serif;padding:32px;color:#0f172a}
+      h1{color:#0c8ce9;margin:0} .muted{color:#64748b;font-size:13px}
+      table{width:100%;border-collapse:collapse;margin-top:20px;font-size:13px}
+      th{text-align:left;padding:8px;background:#f8fafc;border-bottom:2px solid #e2e8f0;font-size:11px;text-transform:uppercase;color:#64748b}
+      .kpi{display:flex;gap:24px;margin:16px 0} .kpi div{padding:12px 16px;background:#f8fafc;border-radius:12px}
+      @media print{button{display:none}}</style></head><body>
+      <h1>${co.name || 'MlimaniFleet'} — Warehouse stock report</h1>
+      <p class="muted">Printed ${new Date().toLocaleString()} · ${co.address || ''}</p>
+      <div class="kpi">
+        <div><div class="muted">SKUs</div><strong>${(parts||[]).length}</strong></div>
+        <div><div class="muted">Stock value</div><strong>TZS ${(summary.stock_value_tzs||0).toLocaleString()}</strong></div>
+        <div><div class="muted">Low stock</div><strong>${summary.low_stock||0}</strong></div>
+      </div>
+      <table><thead><tr><th>SKU</th><th>Part</th><th style="text-align:right">Qty</th><th>Unit</th><th style="text-align:right">Min</th><th>Location</th><th style="text-align:right">Value TZS</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7">No parts</td></tr>'}</tbody></table>
+      <p class="muted" style="margin-top:24px">Recent movements: ${(moves||[]).length} recorded</p>
+      <button onclick="window.print()" style="margin-top:20px;padding:10px 20px;background:#0c8ce9;color:#fff;border:0;border-radius:8px;cursor:pointer">Print / PDF</button>
+      </body></html>`);
+    w.document.close();
   } catch(e) { alert(e.message); }
 }
 

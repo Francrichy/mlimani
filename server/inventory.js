@@ -25,15 +25,15 @@ function createPart(auth, body) {
   const part = {
     id: uid(),
     company_id: auth.company_id,
-    sku: body.sku || `SKU-${Date.now().toString().slice(-5)}`,
-    name: body.name || '',
+    sku: (body.sku || `SKU-${Date.now().toString().slice(-5)}`).trim(),
+    name: (body.name || '').trim(),
     category: body.category || 'general',
-    stock: Number(body.stock) || 0,
+    stock: 0, // always start at 0 — use Receive to add quantity
     min_stock: Number(body.min_stock) || 0,
-    unit: body.unit || 'pcs',
+    unit: (body.unit || 'pcs').trim() || 'pcs',
     unit_cost_tzs: Number(body.unit_cost_tzs) || 0,
     supplier_name: body.supplier_name || '',
-    location: body.location || 'Main store', // shelf / bin
+    location: body.location || 'Main store',
     notes: body.notes || '',
     created_at: now(),
     updated_at: now()
@@ -41,16 +41,6 @@ function createPart(auth, body) {
   const all = read('inventory_parts') || [];
   all.push(part);
   write('inventory_parts', all);
-  if (part.stock > 0) {
-    recordMove(auth, {
-      part_id: part.id,
-      type: 'receive',
-      qty: part.stock,
-      delta: part.stock,
-      reason: 'Opening stock',
-      stock_after: part.stock
-    });
-  }
   return part;
 }
 

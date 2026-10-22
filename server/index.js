@@ -730,7 +730,7 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
   // ---------- Inventory ----------
   if (pathname === '/api/inventory' && method === 'GET') {
     const auth = requireAuth(req, res); if (!auth) return;
-    return send(res, 200, { parts: inv.listParts(auth), moves: inv.listMoves(auth, 80), summary: inv.warehouseSummary(auth) });
+    return send(res, 200, { parts: inv.listParts(auth) });
   }
   if (pathname === '/api/inventory' && method === 'POST') {
     const auth = requireAuth(req, res); if (!auth) return;
@@ -775,17 +775,6 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
     return send(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'Not found' });
   }
 
-
-  if (pathname === '/api/inventory/receive' && method === 'POST') {
-    const auth = requireAuth(req, res); if (!auth) return;
-    try { return send(res, 200, inv.receiveStock(auth, body)); }
-    catch (e) { return send(res, 400, { error: e.message }); }
-  }
-  if (pathname === '/api/inventory/issue' && method === 'POST') {
-    const auth = requireAuth(req, res); if (!auth) return;
-    try { return send(res, 200, inv.issueStock(auth, body)); }
-    catch (e) { return send(res, 400, { error: e.message }); }
-  }
   // ---------- Maintenance rules (odometer) ----------
   if (pathname === '/api/maintenance/rules' && method === 'GET') {
     const auth = requireAuth(req, res); if (!auth) return;

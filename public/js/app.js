@@ -174,7 +174,7 @@ const titles = {
   maintenance: ['Maintenance', 'Service schedules and work orders'],
   fuel: ['Fuel Management', 'Logs, cost and consumption'],
   tracking: ['Live Tracking', 'Real-time vehicle positions'],
-  inventory: ['Parts Warehouse', 'Store receive, issue to vehicles, stock levels'],
+  inventory: ['Parts Inventory', 'Spare parts stock and usage'],
   finance: ['Finance & Billing', 'Revenue, invoices and expenses'],
   reports: ['Reports', 'Operational and financial insights'],
   team: ['Team', 'Company users and permissions'],
@@ -1138,65 +1138,18 @@ async function payInvoiceAmt(id) {
 
 
 async function renderInventory() {
-  const [invRes, vehRes] = await Promise.all([
-    api('/api/inventory'),
-    api('/api/vehicles').catch(() => ({ vehicles: [] }))
-  ]);
-  const parts = invRes.parts || [];
-  const moves = invRes.moves || [];
-  const summary = invRes.summary || {};
-  const vehicles = vehRes.vehicles || [];
+  const { parts } = await api('/api/inventory');
   const low = parts.filter(x => x.stock <= x.min_stock).length;
-  const partOpts = parts.map(x => `<option value="${x.id}">${x.sku} — ${x.name} (${x.stock} ${x.unit||''})</option>`).join('');
-
   return `
   <div class="page-enter space-y-5">
-    <div class="grid sm:grid-cols-4 gap-4">
-      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">SKUs in store</div><div class="text-2xl font-bold mt-1">${summary.total_skus||parts.length}</div></div>
-      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Low stock</div><div class="text-2xl font-bold mt-1 ${low?'text-red-600':''}">${summary.low_stock||low}</div></div>
-      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Stock value</div><div class="text-2xl font-bold mt-1">TZS ${fmt(summary.stock_value_tzs||0)}</div></div>
-      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Issued today</div><div class="text-2xl font-bold mt-1">${summary.issues_today||0} <span class="text-sm font-normal text-slate-400">(${summary.qty_issued_today||0} units)</span></div></div>
+    <div class="flex justify-between items-center flex-wrap gap-3">
+      <p class="text-sm text-slate-500">${parts.length} part types · <span class="${low?'text-red-600 font-medium':''}">${low} low stock</span></p>
+      <button onclick="document.getElementById('inv-part-form').classList.toggle('hidden')" class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2">
+        <i data-lucide="plus" class="w-4 h-4"></i> Add part
+      </button>
     </div>
-
-    <div class="flex flex-wrap gap-2">
-      <button onclick="document.getElementById('wh-issue').classList.toggle('hidden');document.getElementById('wh-receive').classList.add('hidden');document.getElementById('wh-add').classList.add('hidden')" class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg font-medium">Issue parts</button>
-      <button onclick="document.getElementById('wh-receive').classList.toggle('hidden');document.getElementById('wh-issue').classList.add('hidden');document.getElementById('wh-add').classList.add('hidden')" class="bg-emerald-600 text-white text-sm px-4 py-2 rounded-lg font-medium">Receive stock</button>
-      <button onclick="document.getElementById('wh-add').classList.toggle('hidden');document.getElementById('wh-issue').classList.add('hidden');document.getElementById('wh-receive').classList.add('hidden')" class="border text-sm px-4 py-2 rounded-lg">Add new part</button>
-    </div>
-
-    <!-- ISSUE -->
-    <div id="wh-issue" class="hidden bg-white rounded-xl border p-5 space-y-3 border-brand-200">
-      <h3 class="font-semibold text-brand-800">Issue parts from warehouse</h3>
-      <p class="text-xs text-slate-500">Storeman issues oil, filters, tyres etc. to a truck or mechanic</p>
-      <div class="grid sm:grid-cols-2 gap-3">
-        <select id="iss-part" class="border rounded-lg px-3 py-2 text-sm"><option value="">Select part *</option>${partOpts}</select>
-        <input id="iss-qty" type="number" min="1" placeholder="Quantity *" class="border rounded-lg px-3 py-2 text-sm">
-        <select id="iss-vehicle" class="border rounded-lg px-3 py-2 text-sm">
-          <option value="">Vehicle (optional)</option>
-          ${vehicles.map(v => `<option value="${v.id}" data-plate="${v.plate}">${v.plate}</option>`).join('')}
-        </select>
-        <input id="iss-to" placeholder="Issued to (mechanic / driver)" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="iss-reason" placeholder="Reason / job (e.g. oil change)" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="iss-ref" placeholder="Job / WO reference" class="border rounded-lg px-3 py-2 text-sm">
-      </div>
-      <button onclick="doIssuePart()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm">Confirm issue</button>
-    </div>
-
-    <!-- RECEIVE -->
-    <div id="wh-receive" class="hidden bg-white rounded-xl border p-5 space-y-3 border-emerald-200">
-      <h3 class="font-semibold text-emerald-800">Receive stock into warehouse</h3>
-      <div class="grid sm:grid-cols-2 gap-3">
-        <select id="rcv-part" class="border rounded-lg px-3 py-2 text-sm"><option value="">Select part *</option>${partOpts}</select>
-        <input id="rcv-qty" type="number" min="1" placeholder="Quantity received *" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="rcv-reason" placeholder="Supplier / GRN note" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="rcv-ref" placeholder="Invoice / delivery note no." class="border rounded-lg px-3 py-2 text-sm">
-      </div>
-      <button onclick="doReceivePart()" class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm">Confirm receive</button>
-    </div>
-
-    <!-- ADD PART -->
-    <div id="wh-add" class="hidden bg-white rounded-xl border p-5 space-y-3">
-      <h3 class="font-semibold">Register new part in store</h3>
+    <div id="inv-part-form" class="hidden bg-white rounded-xl border p-5 space-y-3">
+      <h3 class="font-semibold">New inventory item</h3>
       <div class="grid sm:grid-cols-3 gap-3">
         <input id="ip-sku" placeholder="SKU" class="border rounded-lg px-3 py-2 text-sm">
         <input id="ip-name" placeholder="Part name *" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
@@ -1205,92 +1158,37 @@ async function renderInventory() {
           <option value="tyre">Tyre</option><option value="brake">Brake</option>
           <option value="battery">Battery</option><option value="general">General</option>
         </select>
-        <input id="ip-stock" type="number" placeholder="Opening stock" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="ip-min" type="number" placeholder="Min stock level" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="ip-unit" placeholder="Unit" value="pcs" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="ip-stock" type="number" placeholder="Stock qty" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="ip-min" type="number" placeholder="Min stock" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="ip-unit" placeholder="Unit (pcs, drums…)" value="pcs" class="border rounded-lg px-3 py-2 text-sm">
         <input id="ip-cost" type="number" placeholder="Unit cost TZS" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="ip-location" placeholder="Shelf / location" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="ip-supplier" placeholder="Supplier" class="border rounded-lg px-3 py-2 text-sm">
+        <input id="ip-supplier" placeholder="Supplier" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
       </div>
-      <button onclick="saveInventoryPart()" class="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm">Save part</button>
+      <button onclick="saveInventoryPart()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm">Save part</button>
     </div>
-
     <div class="bg-white rounded-xl border overflow-hidden">
-      <div class="px-5 py-3 border-b font-semibold text-sm">Store stock</div>
       <table class="w-full text-sm">
         <thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
-          <th class="px-5 py-3">SKU</th><th class="py-3">Part</th><th class="py-3">Location</th><th class="py-3">Stock</th><th class="py-3">Min</th><th class="py-3">Status</th><th class="py-3"></th>
+          <th class="px-5 py-3">SKU</th><th class="py-3">Part</th><th class="py-3">Stock</th><th class="py-3">Min</th><th class="py-3">Unit cost</th><th class="py-3">Status</th><th class="py-3"></th>
         </tr></thead>
         <tbody class="divide-y">
           ${parts.map(x => `<tr>
             <td class="px-5 py-3 font-mono text-xs">${x.sku}</td>
             <td class="py-3 font-medium">${x.name}<div class="text-xs text-slate-400">${x.category||''}</div></td>
-            <td class="py-3 text-xs text-slate-500">${x.location||'—'}</td>
-            <td class="py-3 font-semibold">${x.stock} ${x.unit||''}</td>
+            <td class="py-3">${x.stock} ${x.unit||''}</td>
             <td class="py-3 text-slate-500">${x.min_stock}</td>
-            <td class="py-3">${x.stock<=x.min_stock?'<span class="text-xs px-2 py-0.5 rounded bg-red-50 text-red-700">Reorder</span>':'<span class="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">OK</span>'}</td>
-            <td class="py-3 pr-3"><button onclick="quickIssue('${x.id}')" class="text-xs text-brand-600 font-medium">Issue</button></td>
-          </tr>`).join('') || '<tr><td colspan="7" class="px-5 py-8 text-center text-slate-400">No parts — add parts to open the store</td></tr>'}
-        </tbody>
-      </table>
-    </div>
-
-    <div class="bg-white rounded-xl border overflow-hidden">
-      <div class="px-5 py-3 border-b font-semibold text-sm">Recent store movements</div>
-      <table class="w-full text-sm">
-        <thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
-          <th class="px-5 py-3">When</th><th class="py-3">Type</th><th class="py-3">Part</th><th class="py-3">Qty</th><th class="py-3">Vehicle / to</th><th class="py-3">Reason</th>
-        </tr></thead>
-        <tbody class="divide-y">
-          ${moves.slice(0,25).map(m => {
-            const part = parts.find(p => p.id === m.part_id);
-            return `<tr>
-              <td class="px-5 py-2 text-xs text-slate-500">${(m.created_at||'').slice(0,16).replace('T',' ')}</td>
-              <td class="py-2"><span class="text-xs px-2 py-0.5 rounded ${m.type==='issue'?'bg-amber-50 text-amber-800':'bg-emerald-50 text-emerald-800'}">${m.type||'—'}</span></td>
-              <td class="py-2">${part ? part.sku : (m.part_id||'—').slice(0,8)}</td>
-              <td class="py-2 font-medium">${m.type==='issue'?'−':'+'}${m.qty||Math.abs(m.delta||0)}</td>
-              <td class="py-2 text-xs">${m.vehicle_plate||m.issued_to||'—'}</td>
-              <td class="py-2 text-xs text-slate-500">${m.reason||m.reference||'—'}</td>
-            </tr>`;
-          }).join('') || '<tr><td colspan="6" class="px-5 py-6 text-center text-slate-400">No movements yet</td></tr>'}
+            <td class="py-3">TZS ${fmt(x.unit_cost_tzs||0)}</td>
+            <td class="py-3">${x.stock<=x.min_stock?'<span class="text-xs px-2 py-0.5 rounded bg-red-50 text-red-700">Low stock</span>':'<span class="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">OK</span>'}</td>
+            <td class="py-3 pr-3 space-x-2">
+              <button onclick="adjustPart('${x.id}',1)" class="text-xs text-brand-600">+1</button>
+              <button onclick="adjustPart('${x.id}',-1)" class="text-xs text-slate-500">-1</button>
+              <button onclick="removePart('${x.id}')" class="text-xs text-red-500">Del</button>
+            </td>
+          </tr>`).join('') || '<tr><td colspan="7" class="px-5 py-8 text-center text-slate-400">No parts — click Add part</td></tr>'}
         </tbody>
       </table>
     </div>
   </div>`;
-}
-async function doIssuePart() {
-  try {
-    const sel = document.getElementById('iss-vehicle');
-    const plate = sel?.selectedOptions?.[0]?.dataset?.plate || '';
-    await api('/api/inventory/issue', { method:'POST', body: JSON.stringify({
-      part_id: document.getElementById('iss-part').value,
-      qty: +document.getElementById('iss-qty').value,
-      vehicle_id: document.getElementById('iss-vehicle').value || null,
-      vehicle_plate: plate,
-      issued_to: document.getElementById('iss-to').value,
-      reason: document.getElementById('iss-reason').value,
-      reference: document.getElementById('iss-ref').value
-    })});
-    showPage('inventory');
-  } catch(e) { alert(e.message); }
-}
-async function doReceivePart() {
-  try {
-    await api('/api/inventory/receive', { method:'POST', body: JSON.stringify({
-      part_id: document.getElementById('rcv-part').value,
-      qty: +document.getElementById('rcv-qty').value,
-      reason: document.getElementById('rcv-reason').value,
-      reference: document.getElementById('rcv-ref').value
-    })});
-    showPage('inventory');
-  } catch(e) { alert(e.message); }
-}
-function quickIssue(partId) {
-  document.getElementById('wh-issue').classList.remove('hidden');
-  document.getElementById('wh-receive').classList.add('hidden');
-  document.getElementById('wh-add').classList.add('hidden');
-  document.getElementById('iss-part').value = partId;
-  document.getElementById('iss-qty').focus();
 }
 async function saveInventoryPart() {
   try {
@@ -1302,11 +1200,19 @@ async function saveInventoryPart() {
       min_stock: +document.getElementById('ip-min').value,
       unit: document.getElementById('ip-unit').value,
       unit_cost_tzs: +document.getElementById('ip-cost').value,
-      location: document.getElementById('ip-location')?.value || '',
       supplier_name: document.getElementById('ip-supplier').value
     })});
     showPage('inventory');
   } catch(e) { alert(e.message); }
+}
+async function adjustPart(id, delta) {
+  await api('/api/inventory/'+id+'/adjust', { method:'POST', body: JSON.stringify({ delta, reason: delta>0?'stock in':'stock out' }) });
+  showPage('inventory');
+}
+async function removePart(id) {
+  if (!confirm('Delete this part?')) return;
+  await api('/api/inventory/'+id, { method:'DELETE' });
+  showPage('inventory');
 }
 
 async function renderReports() {

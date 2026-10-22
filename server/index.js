@@ -166,6 +166,39 @@ function seedIfEmpty() {
   console.log('  Demo:  demo@mlimanifleet.tz / demo123');
 }
 
+
+function activatePaymentByRef(ref) {
+  if (!ref) return false;
+  const payments = read('payments') || [];
+  const idx = payments.findIndex(p =>
+    p.id === ref || p.gateway_ref === ref ||
+    (p.gateway_response && (p.gateway_response.depositId === ref || p.gateway_response.reference === ref))
+  );
+  if (idx < 0) {
+    console.log('Payment not found for ref', ref);
+    return false;
+  }
+  if (payments[idx].status === 'completed') return true;
+  payments[idx].status = 'completed';
+  payments[idx].completed_at = now();
+  write('payments', payments);
+
+  const companyId = payments[idx].company_id;
+  const companies = read('companies') || [];
+  const ci = companies.findIndex(c => c.id === companyId);
+  if (ci >= 0) {
+    companies[ci].subscription_status = 'active';
+    companies[ci].next_billing_date = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    if (payments[idx].vehicle_count) {
+      // keep limit in line with paid tier when available
+    }
+    write('companies', companies);
+    console.log('Subscription activated for company', companyId);
+  }
+  return true;
+}
+
+
 // ---------- Router ----------
 async function handleApi(req, res, pathname) {
   const method = req.method;
@@ -411,13 +444,25 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
     });
   }
 
-  // Webhook stubs
+  // Payment webhooks
   if (pathname === '/api/webhooks/selcom' && method === 'POST') {
     console.log('Selcom webhook', body);
+    // Activate if order completed
+    const orderId = body.order_id || body.transid || body.reference;
+    const status = String(body.payment_status || body.result || body.status || '').toUpperCase();
+    if (orderId && (status.includes('COMPLETE') || status.includes('SUCCESS') || status === 'PAID')) {
+      activatePaymentByRef(orderId);
+    }
     return send(res, 200, { ok: true });
   }
   if (pathname === '/api/webhooks/pawapay' && method === 'POST') {
-    console.log('PawaPay webhook', body);
+    console.log('PawaPay webhook', JSON.stringify(body).slice(0, 500));
+    // PawaPay deposit callback shapes vary; common fields:
+    const depositId = body.depositId || body.deposit_id || (body.data && body.data.depositId);
+    const status = String(body.status || (body.data && body.data.status) || '').toUpperCase();
+    if (depositId && (status === 'COMPLETED' || status === 'SUCCESS' || status === 'SUCCESSFUL')) {
+      activatePaymentByRef(depositId);
+    }
     return send(res, 200, { ok: true });
   }
 

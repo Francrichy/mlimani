@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const url = require('url');
 const { read, write, uid, now } = require('./db');
-const { hashPassword, verifyPassword, createToken, verifyToken } = require('./auth');
+const { hashPassword, verifyPassword, createToken, verifyToken, normalizePhone, isPhoneLike } = require('./auth');
 const { selcomCreateOrder, pawapayDeposit, selcomQueryOrder, pawapayDepositStatus, TZA_PROVIDERS, DEMO } = require('./payments');
 const { getPricingTiers, priceForCount } = require('./pricing');
 const mod = require('./modules');
@@ -216,10 +216,22 @@ async function handleApi(req, res, pathname) {
 
   // ---- AUTH ----
   if (pathname === '/api/auth/register' && method === 'POST') {
-    const { email, password, name, company_name, phone } = body;
-    if (!email || !password || !company_name) return send(res, 400, { error: 'email, password, company_name required' });
+    const { password, name, company_name } = body;
+    let email = (body.email || '').trim().toLowerCase();
+    let phone = normalizePhone(body.phone || '');
+    if (!password || !company_name) return send(res, 400, { error: 'Company name and password required' });
+    if (!phone && !email) return send(res, 400, { error: 'Provide mobile number or email' });
+    if (phone && !/^255[67]\d{8}$/.test(phone)) {
+      return send(res, 400, { error: 'Enter a valid Tanzania mobile (e.g. 07XXXXXXXX)' });
+    }
+    if (!email && phone) email = phone + '@phone.mlimanifleet.tz';
     const users = read('users');
-    if (users.find(u => u.email === email.toLowerCase())) return send(res, 409, { error: 'Email already registered' });
+    if (email && !email.includes('@phone.mlimanifleet') && users.find(u => (u.email || '').toLowerCase() === email)) {
+      return send(res, 409, { error: 'Email already registered' });
+    }
+    if (phone && users.find(u => normalizePhone(u.phone) === phone)) {
+      return send(res, 409, { error: 'Mobile number already registered' });
+    }
 
     const companyId = uid();
     const userId = uid();
@@ -228,19 +240,22 @@ async function handleApi(req, res, pathname) {
       id: companyId,
       name: company_name,
       phone: phone || '',
-      email: email.toLowerCase(),
+      email: email.includes('@phone.mlimanifleet') ? '' : email,
       subscription_status: 'trial',
       vehicle_limit: 5,
       current_vehicles: 0,
       next_billing_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
       trial_ends: new Date(Date.now() + 7 * 86400000).toISOString(),
+      tin: '', vrn: '', address: '', city: '', vat_default: false,
+      invoice_footer: 'Thank you for your business',
       created_at: now()
     });
     write('companies', companies);
 
     users.push({
       id: userId,
-      email: email.toLowerCase(),
+      email,
+      phone: phone || '',
       password: hashPassword(password),
       name: name || company_name,
       role: 'fleet_manager',
@@ -251,21 +266,33 @@ async function handleApi(req, res, pathname) {
     });
     write('users', users);
 
-    const token = createToken({ id: userId, email: email.toLowerCase(), role: 'fleet_manager', company_id: companyId });
-    return send(res, 201, { token, user: { id: userId, email, name, role: 'fleet_manager', company_id: companyId } });
+    const token = createToken({ id: userId, email, role: 'fleet_manager', company_id: companyId });
+    return send(res, 201, {
+      token,
+      user: { id: userId, email, phone: phone || '', name: name || company_name, role: 'fleet_manager', company_id: companyId }
+    });
   }
 
   if (pathname === '/api/auth/login' && method === 'POST') {
-    const { email, password } = body;
+    const identity = (body.identity || body.email || body.phone || '').trim();
+    const password = body.password || '';
+    if (!identity || !password) return send(res, 400, { error: 'Email or mobile number and password required' });
     const users = read('users');
-    const user = users.find(u => u.email === (email || '').toLowerCase());
-    if (!user || !verifyPassword(password || '', user.password)) {
-      return send(res, 401, { error: 'Invalid email or password' });
+    let user = null;
+    if (isPhoneLike(identity)) {
+      const phone = normalizePhone(identity);
+      user = users.find(u => normalizePhone(u.phone) === phone);
+      if (!user) user = users.find(u => (u.email || '').includes(phone));
+    } else {
+      user = users.find(u => (u.email || '').toLowerCase() === identity.toLowerCase());
+    }
+    if (!user || !verifyPassword(password, user.password)) {
+      return send(res, 401, { error: 'Invalid login or password' });
     }
     const token = createToken({ id: user.id, email: user.email, role: user.role, company_id: user.company_id });
     return send(res, 200, {
       token,
-      user: { id: user.id, email: user.email, name: user.name, role: user.role, company_id: user.company_id, permissions: user.permissions || null }
+      user: { id: user.id, email: user.email, phone: user.phone, name: user.name, role: user.role, company_id: user.company_id, permissions: user.permissions || null }
     });
   }
 

@@ -27,22 +27,23 @@ function showRegister() {
 async function doLogin(e) {
   e.preventDefault();
   const err = document.getElementById('login-error');
-  err.classList.add('hidden');
+  if (err) err.classList.add('hidden');
   try {
+    const identityEl = document.getElementById('login-identity') || document.getElementById('login-email');
+    const identity = (identityEl?.value || '').trim();
+    const password = document.getElementById('login-password')?.value || '';
+    if (!identity) throw new Error('Enter email or mobile number');
     const data = await api('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({
-        email: document.getElementById('login-email').value,
-        password: document.getElementById('login-password').value
-      })
+      body: JSON.stringify({ identity, email: identity, phone: identity, password })
     });
     token = data.token;
     localStorage.setItem('mf_token', token);
     currentUser = data.user;
     await bootApp();
   } catch (ex) {
-    err.textContent = ex.message;
-    err.classList.remove('hidden');
+    if (err) { err.textContent = ex.message; err.classList.remove('hidden'); }
+    else alert(ex.message);
   }
   return false;
 }
@@ -50,15 +51,20 @@ async function doLogin(e) {
 async function doRegister(e) {
   e.preventDefault();
   const err = document.getElementById('reg-error');
-  err.classList.add('hidden');
+  if (err) err.classList.add('hidden');
   try {
+    const phone = (document.getElementById('reg-phone')?.value || '').trim();
+    const email = (document.getElementById('reg-email')?.value || '').trim();
+    if (!phone && !email) throw new Error('Enter mobile number or email');
+    if (!(document.getElementById('reg-company')?.value || '').trim()) throw new Error('Company name is required');
+    if ((document.getElementById('reg-password')?.value || '').length < 6) throw new Error('Password must be at least 6 characters');
     const data = await api('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({
-        company_name: document.getElementById('reg-company').value,
-        name: document.getElementById('reg-name').value,
-        email: document.getElementById('reg-email').value,
-        phone: document.getElementById('reg-phone').value,
+        company_name: document.getElementById('reg-company').value.trim(),
+        name: (document.getElementById('reg-name')?.value || '').trim(),
+        email,
+        phone,
         password: document.getElementById('reg-password').value
       })
     });
@@ -67,8 +73,8 @@ async function doRegister(e) {
     currentUser = data.user;
     await bootApp();
   } catch (ex) {
-    err.textContent = ex.message;
-    err.classList.remove('hidden');
+    if (err) { err.textContent = ex.message; err.classList.remove('hidden'); }
+    else alert(ex.message);
   }
   return false;
 }

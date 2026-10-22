@@ -46,4 +46,21 @@ function verifyToken(token) {
   }
 }
 
-module.exports = { hashPassword, verifyPassword, createToken, verifyToken };
+
+/** Normalize TZ mobile to 255XXXXXXXXX */
+function normalizePhone(phone) {
+  if (!phone) return '';
+  let p = String(phone).replace(/[\s\-()]/g, '');
+  if (p.startsWith('+')) p = p.slice(1);
+  if (p.startsWith('0') && p.length === 10) p = '255' + p.slice(1);
+  if (p.startsWith('255') && p.length === 12) return p;
+  return p;
+}
+
+function isPhoneLike(value) {
+  const v = String(value || '').replace(/[\s\-()]/g, '');
+  return /^(\+?255|0)?[67]\d{8}$/.test(v) || /^255[67]\d{8}$/.test(v);
+}
+
+module.exports = { hashPassword, verifyPassword, createToken, verifyToken, normalizePhone, isPhoneLike };
+

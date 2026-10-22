@@ -13,6 +13,7 @@ const { selcomCreateOrder, pawapayDeposit, selcomQueryOrder, pawapayDepositStatu
 const { getPricingTiers, priceForCount } = require('./pricing');
 const mod = require('./modules');
 const notify = require('./notifications');
+const { initDb } = require('./db');
 const { initPg } = require('./pg');
 const fin = require('./finance');
 const gps = require('./gps');
@@ -950,19 +951,6 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
 }
 
 // ---------- Server ----------
-seedIfEmpty();
-// Seed trips/maintenance/fuel for demo company
-(function () {
-  const cos = read('companies');
-  if (cos[0]) {
-    mod.seedModules(cos[0].id);
-    fin.seedFinance(cos[0].id);
-    gps.seedGps(cos[0].id);
-    inv.seedInventory(cos[0].id);
-  }
-})();
-initPg().catch(e => console.warn('PG init', e.message));
-
 const server = http.createServer(async (req, res) => {
   const parsed = url.parse(req.url, true);
   const pathname = parsed.pathname || '/';
@@ -980,15 +968,36 @@ const server = http.createServer(async (req, res) => {
   serveStatic(req, res, pathname);
 });
 
-server.listen(PORT, () => {
-  console.log('');
-  console.log('  ╔══════════════════════════════════════════╗');
-  console.log('  ║     MlimaniFleet ERP  —  Ready           ║');
-  console.log(`  ║     http://localhost:${PORT}                 ║`);
-  console.log('  ╚══════════════════════════════════════════╝');
-  console.log('');
-  console.log('  Platform admin: set ADMIN_EMAIL / ADMIN_PASSWORD env or use seed defaults');
-  if (process.env.SEED_DEMO !== 'false') console.log('  Demo fleet: demo@mlimanifleet.tz / demo123');
-  console.log(`  Payment mode: ${DEMO ? 'DEMO (auto-success)' : 'LIVE'}`);
-  console.log('');
-});
+(async function boot() {
+  try {
+    const dbInfo = await initDb();
+    console.log('Storage mode:', dbInfo.mode);
+  } catch (e) {
+    console.warn('DB init error', e.message);
+  }
+  seedIfEmpty();
+  try {
+    const cos = read('companies');
+    if (cos[0]) {
+      mod.seedModules(cos[0].id);
+      fin.seedFinance(cos[0].id);
+      gps.seedGps(cos[0].id);
+      inv.seedInventory(cos[0].id);
+    }
+  } catch (e) {
+    console.warn('Seed modules', e.message);
+  }
+
+  server.listen(PORT, () => {
+    console.log('');
+    console.log('  ╔══════════════════════════════════════════╗');
+    console.log('  ║     MlimaniFleet ERP  —  Ready           ║');
+    console.log(`  ║     http://localhost:${PORT}                 ║`);
+    console.log('  ╚══════════════════════════════════════════╝');
+    console.log('');
+    console.log('  Platform admin: admin@mlimanifleet.tz (change password after launch)');
+    if (process.env.SEED_DEMO !== 'false') console.log('  Demo fleet: demo@mlimanifleet.tz / demo123');
+    console.log(`  Payment mode: ${DEMO ? 'DEMO (auto-success)' : 'LIVE'}`);
+    console.log('');
+  });
+})();

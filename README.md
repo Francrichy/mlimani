@@ -38,3 +38,16 @@ docker compose up -d --build
 ```
 
 See `.env.example` and **DEPLOY.md** for production.
+
+
+## Trial period
+New companies get a **7-day free trial**.
+
+## Logins (first seed)
+
+| Role | Email | Password | Use |
+|------|-------|----------|-----|
+| **You (platform owner)** | `admin@mlimanifleet.tz` | `admin123` | Pricing, all companies |
+| Demo fleet manager | `demo@mlimanifleet.tz` | `demo123` | Test only — remove on live |
+
+**Production:** Change the admin password immediately. Remove or disable demo accounts. Set `SEED_DEMO=false` so demo is not recreated on empty DB.

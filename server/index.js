@@ -162,8 +162,8 @@ function seedIfEmpty() {
   getPricingTiers();
 
   console.log('✓ Seeded demo data');
-  console.log('  Admin: admin@mlimanifleet.tz / admin123');
-  console.log('  Demo:  demo@mlimanifleet.tz / demo123');
+  console.log('  Owner (platform admin) — see seed credentials in README');
+  if (process.env.SEED_DEMO !== 'false') console.log('  Demo: demo@mlimanifleet.tz / demo123');
 }
 
 
@@ -232,8 +232,8 @@ async function handleApi(req, res, pathname) {
       subscription_status: 'trial',
       vehicle_limit: 5,
       current_vehicles: 0,
-      next_billing_date: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
-      trial_ends: new Date(Date.now() + 14 * 86400000).toISOString(),
+      next_billing_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+      trial_ends: new Date(Date.now() + 7 * 86400000).toISOString(),
       created_at: now()
     });
     write('companies', companies);
@@ -949,8 +949,8 @@ server.listen(PORT, () => {
   console.log(`  ║     http://localhost:${PORT}                 ║`);
   console.log('  ╚══════════════════════════════════════════╝');
   console.log('');
-  console.log('  Demo login:  demo@mlimanifleet.tz / demo123');
-  console.log('  Admin login: admin@mlimanifleet.tz / admin123');
+  console.log('  Platform admin: set ADMIN_EMAIL / ADMIN_PASSWORD env or use seed defaults');
+  if (process.env.SEED_DEMO !== 'false') console.log('  Demo fleet: demo@mlimanifleet.tz / demo123');
   console.log(`  Payment mode: ${DEMO ? 'DEMO (auto-success)' : 'LIVE'}`);
   console.log('');
 });

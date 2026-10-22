@@ -147,7 +147,7 @@ async function bootApp() {
       };
       document.querySelectorAll('.nav-item[data-page]').forEach(el => {
         const page = el.dataset.page;
-        if (['dashboard','team','billing','admin-pricing','admin-companies'].includes(page)) return;
+        if (['dashboard','team','billing','admin-pricing','admin-companies','admin-home','admin-payments','settings'].includes(page)) return;
         const key = navMap[page];
         if (key && perms[key] === false) el.classList.add('hidden');
         else if (key) el.classList.remove('hidden');
@@ -163,7 +163,7 @@ async function bootApp() {
       }
     }
     bindNav();
-    await showPage('dashboard');
+    await showPage(currentUser.role === 'platform_admin' ? 'admin-home' : 'dashboard');
     if (window.lucide) lucide.createIcons();
   } catch (err) {
     console.error('bootApp UI error', err);
@@ -201,8 +201,11 @@ const titles = {
   reports: ['Reports', 'Operational and financial insights'],
   team: ['Team', 'Company users and permissions'],
   billing: ['Subscription', 'Plans and mobile money payments'],
-  'admin-pricing': ['Pricing Plans', 'Adjust monthly subscription prices'],
-  'admin-companies': ['Companies', 'All tenant fleets']
+  'admin-home': ['Owner dashboard', 'Clients, revenue and platform health'],
+  'admin-pricing': ['Pricing plans', 'Monthly SaaS rates in TZS'],
+  'admin-companies': ['All clients', 'Every fleet company on the platform'],
+  'admin-payments': ['Payments received', 'Subscription payments from clients'],
+  'settings': ['Settings', 'Profile and password']
 };
 
 async function showPage(page) {
@@ -237,8 +240,11 @@ async function showPage(page) {
     else if (page === 'reports') main.innerHTML = await renderReports();
     else if (page === 'team') main.innerHTML = await renderTeam();
     else if (page === 'billing') main.innerHTML = await renderBilling();
+    else if (page === 'admin-home') main.innerHTML = await renderAdminHome();
     else if (page === 'admin-pricing') main.innerHTML = await renderAdminPricing();
     else if (page === 'admin-companies') main.innerHTML = await renderAdminCompanies();
+    else if (page === 'admin-payments') main.innerHTML = await renderAdminPayments();
+    else if (page === 'settings') main.innerHTML = await renderSettings();
     else main.innerHTML = '<p>Coming soon</p>';
   } catch (e) {
     main.innerHTML = `<div class="bg-red-50 text-red-700 p-4 rounded-xl">${e.message}</div>`;
@@ -537,6 +543,224 @@ async function payNow() {
     showPage('billing');
   } catch (e) { alert(e.message); }
 }
+
+
+async function renderAdminHome() {
+  const d = await api('/api/admin/overview');
+  const s = d.stats || {};
+  const clients = d.clients || [];
+  const delayed = d.delayed || [];
+  const week = d.registered_week || [];
+  const pays = (d.recent_payments || []).slice(0, 8);
+  return `
+  <div class="page-enter space-y-6">
+    <div class="bg-gradient-to-r from-slate-900 to-brand-800 text-white rounded-2xl p-6 shadow-lg">
+      <div class="text-sm text-brand-200 font-medium">Platform owner</div>
+      <h2 class="text-2xl font-bold mt-1">MlimaniFleet control centre</h2>
+      <p class="text-slate-300 text-sm mt-2">Clients, subscriptions, revenue and overdue billing — at a glance.</p>
+      <div class="flex flex-wrap gap-2 mt-4">
+        <button onclick="showPage('admin-companies')" class="bg-white/10 hover:bg-white/20 text-sm px-3 py-1.5 rounded-lg">All clients</button>
+        <button onclick="showPage('admin-payments')" class="bg-white/10 hover:bg-white/20 text-sm px-3 py-1.5 rounded-lg">Payments</button>
+        <button onclick="showPage('admin-pricing')" class="bg-white/10 hover:bg-white/20 text-sm px-3 py-1.5 rounded-lg">Pricing</button>
+        <button onclick="showPage('settings')" class="bg-white/10 hover:bg-white/20 text-sm px-3 py-1.5 rounded-lg">Settings</button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="bg-white rounded-2xl border p-4 shadow-sm"><div class="text-xs text-slate-500 uppercase">Clients</div><div class="text-3xl font-bold mt-1">${s.total_clients||0}</div><div class="text-xs text-slate-400 mt-1">${s.active_subscriptions||0} active · ${s.trials||0} trial</div></div>
+      <div class="bg-white rounded-2xl border p-4 shadow-sm"><div class="text-xs text-slate-500 uppercase">Revenue (all)</div><div class="text-2xl font-bold mt-1 text-emerald-700">TZS ${fmt(s.revenue_all_tzs||0)}</div><div class="text-xs text-slate-400 mt-1">Week: ${fmt(s.revenue_week_tzs||0)}</div></div>
+      <div class="bg-white rounded-2xl border p-4 shadow-sm"><div class="text-xs text-slate-500 uppercase">This month</div><div class="text-2xl font-bold mt-1">TZS ${fmt(s.revenue_month_tzs||0)}</div><div class="text-xs text-slate-400 mt-1">Paid subscriptions</div></div>
+      <div class="bg-white rounded-2xl border p-4 shadow-sm"><div class="text-xs text-slate-500 uppercase">Delayed / overdue</div><div class="text-3xl font-bold mt-1 ${(s.delayed||0)?'text-red-600':'text-emerald-600'}">${s.delayed||0}</div><div class="text-xs text-slate-400 mt-1">Need follow-up</div></div>
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="bg-slate-50 rounded-xl border p-4"><div class="text-xs text-slate-500">Registered this week</div><div class="text-2xl font-bold">${s.registered_this_week||0}</div></div>
+      <div class="bg-slate-50 rounded-xl border p-4"><div class="text-xs text-slate-500">Last 30 days</div><div class="text-2xl font-bold">${s.registered_last_30_days||0}</div></div>
+      <div class="bg-slate-50 rounded-xl border p-4"><div class="text-xs text-slate-500">Fleet vehicles on platform</div><div class="text-2xl font-bold">${s.total_vehicles||0}</div></div>
+      <div class="bg-slate-50 rounded-xl border p-4"><div class="text-xs text-slate-500">Fleet user accounts</div><div class="text-2xl font-bold">${s.fleet_users||0}</div></div>
+    </div>
+
+    <div class="grid lg:grid-cols-2 gap-5">
+      <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b font-semibold text-sm flex justify-between"><span>Delayed payments / expired trials</span><span class="text-red-600">${delayed.length}</span></div>
+        <ul class="divide-y max-h-64 overflow-y-auto text-sm">
+          ${delayed.map(c => `<li class="px-5 py-3 flex justify-between gap-2">
+            <div><div class="font-medium">${esc(c.name)}</div><div class="text-xs text-slate-400">${c.subscription_status} · next ${c.next_billing_date||c.trial_ends||'—'} · ${c.phone||c.email||''}</div></div>
+            <button onclick="adminSetStatus('${c.id}','past_due')" class="text-xs text-amber-700 font-medium">Mark past due</button>
+          </li>`).join('') || '<li class="px-5 py-8 text-center text-slate-400">No delayed clients</li>'}
+        </ul>
+      </div>
+      <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b font-semibold text-sm">New clients this week</div>
+        <ul class="divide-y max-h-64 overflow-y-auto text-sm">
+          ${week.map(c => `<li class="px-5 py-3 flex justify-between"><span class="font-medium">${esc(c.name)}</span><span class="text-xs text-slate-400">${(c.created_at||'').slice(0,10)}</span></li>`).join('') || '<li class="px-5 py-8 text-center text-slate-400">None this week</li>'}
+        </ul>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+      <div class="px-5 py-3 border-b font-semibold text-sm flex justify-between items-center">
+        <span>Recent client payments</span>
+        <button onclick="showPage('admin-payments')" class="text-brand-600 text-xs font-medium">View all</button>
+      </div>
+      <table class="w-full text-sm">
+        <thead><tr class="text-left text-xs text-slate-500 bg-slate-50 border-b"><th class="px-5 py-2">When</th><th class="py-2">Client</th><th class="py-2">Amount</th><th class="py-2">Gateway</th><th class="py-2">Status</th></tr></thead>
+        <tbody class="divide-y">
+          ${pays.map(p => `<tr>
+            <td class="px-5 py-2 text-xs text-slate-500">${(p.completed_at||p.created_at||'').slice(0,16).replace('T',' ')}</td>
+            <td class="py-2 font-medium">${esc(p.company_name)}</td>
+            <td class="py-2 font-semibold">TZS ${fmt(p.amount||0)}</td>
+            <td class="py-2 text-xs">${p.gateway||'—'}</td>
+            <td class="py-2"><span class="text-xs px-2 py-0.5 rounded ${p.status==='completed'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}">${p.status}</span></td>
+          </tr>`).join('') || '<tr><td colspan="5" class="px-5 py-8 text-center text-slate-400">No payments yet</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+      <div class="px-5 py-3 border-b font-semibold text-sm">All clients (snapshot)</div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm min-w-[640px]">
+          <thead><tr class="text-left text-xs text-slate-500 bg-slate-50 border-b">
+            <th class="px-5 py-2">Company</th><th class="py-2">Status</th><th class="py-2">Vehicles</th><th class="py-2">Paid total</th><th class="py-2">Next bill</th><th class="py-2">Contact</th>
+          </tr></thead>
+          <tbody class="divide-y">
+            ${clients.slice(0,15).map(c => `<tr class="hover:bg-slate-50">
+              <td class="px-5 py-2 font-medium">${esc(c.name)}</td>
+              <td class="py-2"><span class="text-xs px-2 py-0.5 rounded ${c.is_delayed?'bg-red-50 text-red-700':c.subscription_status==='active'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}">${c.subscription_status}${c.is_delayed?' · delayed':''}</span></td>
+              <td class="py-2">${c.vehicle_count}</td>
+              <td class="py-2">TZS ${fmt(c.total_paid_tzs||0)}</td>
+              <td class="py-2 text-xs">${c.next_billing_date||c.trial_ends||'—'}</td>
+              <td class="py-2 text-xs">${c.phone||c.email||'—'}</td>
+            </tr>`).join('') || '<tr><td colspan="6" class="px-5 py-8 text-center text-slate-400">No clients</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function renderAdminPayments() {
+  const d = await api('/api/admin/overview');
+  const pays = d.recent_payments || [];
+  const s = d.stats || {};
+  return `
+  <div class="page-enter space-y-5">
+    <div class="grid sm:grid-cols-3 gap-4">
+      <div class="bg-white border rounded-xl p-4"><div class="text-xs text-slate-500">All time</div><div class="text-xl font-bold text-emerald-700">TZS ${fmt(s.revenue_all_tzs||0)}</div></div>
+      <div class="bg-white border rounded-xl p-4"><div class="text-xs text-slate-500">This month</div><div class="text-xl font-bold">TZS ${fmt(s.revenue_month_tzs||0)}</div></div>
+      <div class="bg-white border rounded-xl p-4"><div class="text-xs text-slate-500">This week</div><div class="text-xl font-bold">TZS ${fmt(s.revenue_week_tzs||0)}</div></div>
+    </div>
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <table class="w-full text-sm">
+        <thead><tr class="text-left text-xs text-slate-500 bg-slate-50 border-b"><th class="px-5 py-3">Date</th><th class="py-3">Client</th><th class="py-3">Phone</th><th class="py-3">Amount</th><th class="py-3">Gateway</th><th class="py-3">Status</th></tr></thead>
+        <tbody class="divide-y">
+          ${pays.map(p => `<tr>
+            <td class="px-5 py-3 text-xs text-slate-500">${(p.completed_at||p.created_at||'').slice(0,19).replace('T',' ')}</td>
+            <td class="py-3 font-medium">${esc(p.company_name)}</td>
+            <td class="py-3 text-xs">${p.phone||'—'}</td>
+            <td class="py-3 font-semibold">TZS ${fmt(p.amount||0)}</td>
+            <td class="py-3 text-xs">${p.gateway||'—'} ${p.provider||''}</td>
+            <td class="py-3"><span class="text-xs px-2 py-0.5 rounded ${p.status==='completed'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}">${p.status}</span></td>
+          </tr>`).join('') || '<tr><td colspan="6" class="px-5 py-10 text-center text-slate-400">No payments recorded yet</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+async function adminSetStatus(companyId, status) {
+  try {
+    await api('/api/admin/companies/' + companyId, { method: 'PATCH', body: JSON.stringify({ subscription_status: status }) });
+    showPage('admin-home');
+  } catch (e) { alert(e.message); }
+}
+
+async function renderSettings() {
+  const me = currentUser || {};
+  return `
+  <div class="page-enter max-w-xl space-y-6">
+    <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
+      <h3 class="font-semibold text-lg">Profile</h3>
+      <div>
+        <label class="text-sm font-medium text-slate-700">Display name</label>
+        <input id="set-name" value="${esc(me.name||'')}" class="mt-1 w-full border rounded-xl px-3 py-2.5 text-sm">
+      </div>
+      <div>
+        <label class="text-sm font-medium text-slate-700">Mobile</label>
+        <input id="set-phone" value="${esc(me.phone||'')}" placeholder="07XXXXXXXX" class="mt-1 w-full border rounded-xl px-3 py-2.5 text-sm">
+      </div>
+      <div>
+        <label class="text-sm font-medium text-slate-700">Email / login</label>
+        <input value="${esc(me.email||'')}" disabled class="mt-1 w-full border rounded-xl px-3 py-2.5 text-sm bg-slate-50 text-slate-500">
+      </div>
+      <button onclick="saveProfile()" class="bg-brand-600 text-white px-4 py-2.5 rounded-xl text-sm font-semibold">Save profile</button>
+    </div>
+
+    <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
+      <h3 class="font-semibold text-lg">Change password</h3>
+      <p class="text-sm text-slate-500">Use a strong password. You will stay signed in after changing it.</p>
+      <div>
+        <label class="text-sm font-medium text-slate-700">Current password</label>
+        <input id="set-cur-pass" type="password" class="mt-1 w-full border rounded-xl px-3 py-2.5 text-sm">
+      </div>
+      <div>
+        <label class="text-sm font-medium text-slate-700">New password</label>
+        <input id="set-new-pass" type="password" minlength="6" class="mt-1 w-full border rounded-xl px-3 py-2.5 text-sm">
+      </div>
+      <div>
+        <label class="text-sm font-medium text-slate-700">Confirm new password</label>
+        <input id="set-new-pass2" type="password" minlength="6" class="mt-1 w-full border rounded-xl px-3 py-2.5 text-sm">
+      </div>
+      <div id="set-pass-msg" class="hidden text-sm rounded-lg px-3 py-2"></div>
+      <button onclick="changePassword()" class="bg-slate-900 text-white px-4 py-2.5 rounded-xl text-sm font-semibold">Update password</button>
+    </div>
+  </div>`;
+}
+
+async function saveProfile() {
+  try {
+    const data = await api('/api/auth/profile', {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: document.getElementById('set-name').value,
+        phone: document.getElementById('set-phone').value
+      })
+    });
+    currentUser = { ...currentUser, ...data.user };
+    document.getElementById('user-name').textContent = currentUser.name || currentUser.email;
+    alert('Profile saved');
+  } catch (e) { alert(e.message); }
+}
+
+async function changePassword() {
+  const msg = document.getElementById('set-pass-msg');
+  const a = document.getElementById('set-new-pass').value;
+  const b = document.getElementById('set-new-pass2').value;
+  if (a !== b) {
+    msg.textContent = 'New passwords do not match';
+    msg.className = 'text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700';
+    return;
+  }
+  try {
+    await api('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: document.getElementById('set-cur-pass').value,
+        new_password: a
+      })
+    });
+    msg.textContent = 'Password updated successfully';
+    msg.className = 'text-sm rounded-lg px-3 py-2 bg-emerald-50 text-emerald-700';
+    document.getElementById('set-cur-pass').value = '';
+    document.getElementById('set-new-pass').value = '';
+    document.getElementById('set-new-pass2').value = '';
+  } catch (e) {
+    msg.textContent = e.message;
+    msg.className = 'text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700';
+  }
+}
+
 
 async function renderAdminPricing() {
   const { tiers } = await api('/api/admin/pricing');

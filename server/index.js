@@ -313,6 +313,132 @@ async function handleApi(req, res, pathname) {
     });
   }
 
+  if (pathname === '/api/auth/change-password' && method === 'POST') {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const { current_password, new_password } = body;
+    if (!current_password || !new_password) return send(res, 400, { error: 'Current and new password required' });
+    if (String(new_password).length < 6) return send(res, 400, { error: 'New password must be at least 6 characters' });
+    const users = read('users');
+    const i = users.findIndex(u => u.id === auth.id);
+    if (i < 0) return send(res, 404, { error: 'User not found' });
+    if (!verifyPassword(current_password, users[i].password)) {
+      return send(res, 401, { error: 'Current password is incorrect' });
+    }
+    users[i].password = hashPassword(new_password);
+    write('users', users);
+    return send(res, 200, { ok: true, message: 'Password updated' });
+  }
+
+  if (pathname === '/api/auth/profile' && method === 'PUT') {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    const users = read('users');
+    const i = users.findIndex(u => u.id === auth.id);
+    if (i < 0) return send(res, 404, { error: 'User not found' });
+    if (body.name != null) users[i].name = String(body.name).trim();
+    if (body.phone != null) users[i].phone = normalizePhone(body.phone);
+    write('users', users);
+    return send(res, 200, {
+      user: { id: users[i].id, email: users[i].email, phone: users[i].phone, name: users[i].name, role: users[i].role, company_id: users[i].company_id }
+    });
+  }
+
+
+
+  if (pathname === '/api/admin/overview' && method === 'GET') {
+    if (!requireAdmin(req, res)) return;
+    const companies = read('companies') || [];
+    const vehicles = read('vehicles') || [];
+    const users = read('users') || [];
+    const payments = read('payments') || [];
+    const nowMs = Date.now();
+    const day = 86400000;
+    const weekAgo = new Date(nowMs - 7 * day).toISOString();
+    const monthAgo = new Date(nowMs - 30 * day).toISOString();
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+    const monthStart = startOfMonth.toISOString();
+
+    const completedPay = payments.filter(p => p.status === 'completed');
+    const revenueAll = completedPay.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const revenueMonth = completedPay.filter(p => (p.completed_at || p.created_at || '') >= monthStart)
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const revenueWeek = completedPay.filter(p => (p.completed_at || p.created_at || '') >= weekAgo)
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+    const registeredWeek = companies.filter(c => (c.created_at || '') >= weekAgo);
+    const registeredMonth = companies.filter(c => (c.created_at || '') >= monthAgo);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const delayed = companies.filter(c => {
+      if (c.subscription_status === 'trial') {
+        return c.trial_ends && c.trial_ends.slice(0, 10) < today;
+      }
+      if (c.subscription_status === 'active') {
+        return c.next_billing_date && c.next_billing_date < today;
+      }
+      return c.subscription_status === 'past_due' || c.subscription_status === 'suspended';
+    });
+
+    const trial = companies.filter(c => c.subscription_status === 'trial');
+    const active = companies.filter(c => c.subscription_status === 'active');
+    const fleetUsers = users.filter(u => u.role !== 'platform_admin');
+
+    const clients = companies.map(c => {
+      const vcount = vehicles.filter(v => v.company_id === c.id).length;
+      const pays = payments.filter(p => p.company_id === c.id);
+      const paid = pays.filter(p => p.status === 'completed').reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      const pending = pays.filter(p => p.status === 'pending').length;
+      return {
+        ...c,
+        vehicle_count: vcount,
+        total_paid_tzs: paid,
+        pending_payments: pending,
+        is_delayed: delayed.some(d => d.id === c.id)
+      };
+    }).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+    const recentPayments = [...payments].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, 30)
+      .map(p => {
+        const co = companies.find(c => c.id === p.company_id);
+        return { ...p, company_name: co ? co.name : '—' };
+      });
+
+    return send(res, 200, {
+      stats: {
+        total_clients: companies.length,
+        active_subscriptions: active.length,
+        trials: trial.length,
+        delayed: delayed.length,
+        fleet_users: fleetUsers.length,
+        total_vehicles: vehicles.length,
+        revenue_all_tzs: revenueAll,
+        revenue_month_tzs: revenueMonth,
+        revenue_week_tzs: revenueWeek,
+        registered_this_week: registeredWeek.length,
+        registered_last_30_days: registeredMonth.length
+      },
+      clients,
+      delayed,
+      registered_week: registeredWeek,
+      recent_payments: recentPayments
+    });
+  }
+
+  if (pathname.startsWith('/api/admin/companies/') && method === 'PATCH') {
+    if (!requireAdmin(req, res)) return;
+    const id = pathname.split('/')[4];
+    const companies = read('companies');
+    const i = companies.findIndex(c => c.id === id);
+    if (i < 0) return send(res, 404, { error: 'Company not found' });
+    const allowed = ['subscription_status', 'vehicle_limit', 'next_billing_date', 'name', 'phone', 'email'];
+    for (const k of allowed) if (body[k] !== undefined) companies[i][k] = body[k];
+    write('companies', companies);
+    return send(res, 200, { company: companies[i] });
+  }
+
   // ---- PRICING (public) ----
   if (pathname === '/api/pricing' && method === 'GET') {
     return send(res, 200, { tiers: getPricingTiers(), currency: 'TZS' });

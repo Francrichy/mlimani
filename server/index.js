@@ -72,6 +72,79 @@ function requireAdmin(req, res) {
   return user;
 }
 
+/** Subscription access for a company record */
+function getSubscriptionState(company) {
+  if (!company) return { ok: true, status: 'none', locked: false, reason: '' };
+  const st = company.subscription_status || 'trial';
+  const today = new Date().toISOString().slice(0, 10);
+  if (st === 'suspended') {
+    return { ok: false, status: st, locked: true, reason: 'Account suspended. Contact MlimaniFleet to restore access.' };
+  }
+  if (st === 'past_due') {
+    return { ok: false, status: st, locked: true, reason: 'Payment overdue. Pay your subscription or contact support after paying.' };
+  }
+  if (st === 'trial') {
+    const ends = (company.trial_ends || '').slice(0, 10);
+    if (ends && ends < today) {
+      return { ok: false, status: 'trial_expired', locked: true, reason: 'Free trial ended. Pay to continue using MlimaniFleet.' };
+    }
+    return { ok: true, status: 'trial', locked: false, reason: '', trial_ends: company.trial_ends };
+  }
+  if (st === 'active') {
+    const next = (company.next_billing_date || '').slice(0, 10);
+    if (next && next < today) {
+      return { ok: false, status: 'expired', locked: true, reason: 'Subscription period ended. Renew to continue.' };
+    }
+    return { ok: true, status: 'active', locked: false, reason: '', next_billing_date: company.next_billing_date };
+  }
+  return { ok: false, status: st, locked: true, reason: 'Subscription inactive. Please pay to continue.' };
+}
+
+function loadCompanyForAuth(auth) {
+  if (!auth || !auth.company_id) return null;
+  return (read('companies') || []).find(c => c.id === auth.company_id) || null;
+}
+
+/** Block operational APIs when subscription locked. Platform admin always allowed. */
+function requireActiveSubscription(req, res, auth) {
+  if (!auth) return null;
+  if (auth.role === 'platform_admin') return auth;
+  const company = loadCompanyForAuth(auth);
+  const state = getSubscriptionState(company);
+  if (state.locked) {
+    send(res, 402, {
+      error: state.reason || 'Subscription required',
+      code: 'SUBSCRIPTION_LOCKED',
+      subscription: state
+    });
+    return null;
+  }
+  return auth;
+}
+
+const SUBSCRIPTION_FREE_PATHS = [
+  '/api/auth/me',
+  '/api/auth/change-password',
+  '/api/auth/profile',
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/billing/summary',
+  '/api/billing/pay',
+  '/api/pricing',
+  '/api/company/profile',
+  '/api/webhooks/selcom',
+  '/api/webhooks/pawapay'
+];
+
+function isSubscriptionFreePath(pathname) {
+  if (SUBSCRIPTION_FREE_PATHS.includes(pathname)) return true;
+  if (pathname.startsWith('/api/admin/')) return true;
+  if (pathname.startsWith('/api/webhooks/')) return true;
+  return false;
+}
+
+
+
 function serveStatic(req, res, pathname) {
   let file = pathname === '/' ? '/index.html' : pathname;
   const full = path.join(PUBLIC, file);
@@ -215,6 +288,25 @@ async function handleApi(req, res, pathname) {
     return res.end();
   }
 
+
+  // ---- SUBSCRIPTION GATE (lock unpaid / expired) ----
+  if (pathname.startsWith('/api/') && method !== 'OPTIONS') {
+    if (!isSubscriptionFreePath(pathname)) {
+      const authGate = getAuth(req);
+      if (authGate && authGate.role !== 'platform_admin' && authGate.company_id) {
+        const companyGate = loadCompanyForAuth(authGate);
+        const stGate = getSubscriptionState(companyGate);
+        if (stGate.locked) {
+          return send(res, 402, {
+            error: stGate.reason || 'Subscription required',
+            code: 'SUBSCRIPTION_LOCKED',
+            subscription: stGate
+          });
+        }
+      }
+    }
+  }
+
   // ---- AUTH ----
   if (pathname === '/api/auth/register' && method === 'POST') {
     const { password, name, company_name } = body;
@@ -307,9 +399,11 @@ async function handleApi(req, res, pathname) {
     if (user.company_id) {
       company = read('companies').find(c => c.id === user.company_id) || null;
     }
+    const sub = getSubscriptionState(company);
     return send(res, 200, {
-      user: { id: user.id, email: user.email, name: user.name, role: user.role, company_id: user.company_id, permissions: user.permissions || null },
-      company
+      user: { id: user.id, email: user.email, phone: user.phone, name: user.name, role: user.role, company_id: user.company_id, permissions: user.permissions || null },
+      company,
+      subscription: sub
     });
   }
 
@@ -424,6 +518,51 @@ async function handleApi(req, res, pathname) {
       delayed,
       registered_week: registeredWeek,
       recent_payments: recentPayments
+    });
+  }
+
+
+  if (pathname.startsWith('/api/admin/companies/') && pathname.endsWith('/mark-paid') && method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    const parts = pathname.split('/');
+    const id = parts[4];
+    const companies = read('companies') || [];
+    const i = companies.findIndex(c => c.id === id);
+    if (i < 0) return send(res, 404, { error: 'Company not found' });
+    const days = Math.min(365, Math.max(1, Number(body.days) || 30));
+    const next = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+    companies[i].subscription_status = 'active';
+    companies[i].next_billing_date = next;
+    companies[i].last_manual_payment_at = now();
+    companies[i].last_manual_payment_note = body.note || 'Manual payment confirmed by platform owner';
+    if (body.vehicle_limit != null) companies[i].vehicle_limit = Number(body.vehicle_limit);
+    write('companies', companies);
+
+    // Optional payment record for owner reports
+    const payments = read('payments') || [];
+    const vehicles = (read('vehicles') || []).filter(v => v.company_id === id);
+    const count = vehicles.length || Number(body.vehicle_count) || 1;
+    const amount = body.amount_tzs != null ? Number(body.amount_tzs) : null;
+    payments.push({
+      id: uid(),
+      company_id: id,
+      amount: amount,
+      currency: 'TZS',
+      phone: companies[i].phone || '',
+      gateway: 'manual',
+      provider: 'manual',
+      status: 'completed',
+      vehicle_count: count,
+      note: body.note || 'Marked paid by owner',
+      completed_at: now(),
+      created_at: now()
+    });
+    write('payments', payments);
+
+    return send(res, 200, {
+      ok: true,
+      company: companies[i],
+      message: 'Marked paid — active until ' + next
     });
   }
 

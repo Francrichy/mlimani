@@ -11,7 +11,13 @@ async function api(path, opts = {}) {
   if (token) headers['Authorization'] = 'Bearer ' + token;
   const res = await fetch(API + path, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Request failed');
+  if (!res.ok) {
+    if (res.status === 402 || data.code === 'SUBSCRIPTION_LOCKED') {
+      window.subscriptionState = data.subscription || { locked: true, reason: data.error };
+      if (typeof showPage === 'function') setTimeout(() => showPage('billing'), 50);
+    }
+    throw new Error(data.error || 'Request failed');
+  }
   return data;
 }
 
@@ -96,6 +102,7 @@ async function bootApp() {
     const me = await api('/api/auth/me');
     currentUser = me.user;
     currentCompany = me.company;
+    window.subscriptionState = me.subscription || { locked: false, ok: true };
   } catch (e) {
     console.warn('auth/me failed', e);
     logout();
@@ -163,7 +170,40 @@ async function bootApp() {
       }
     }
     bindNav();
-    await showPage(currentUser.role === 'platform_admin' ? 'admin-home' : 'dashboard');
+    
+    // Subscription lock banner + nav restrict for fleet users
+    try {
+      const sub = window.subscriptionState || {};
+      let banner = document.getElementById('sub-lock-banner');
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'sub-lock-banner';
+        const mainCol = document.querySelector('#app-shell > div.flex-1') || document.getElementById('app-shell');
+        if (mainCol) mainCol.insertBefore(banner, mainCol.firstChild);
+      }
+      if (sub.locked && currentUser.role !== 'platform_admin') {
+        banner.className = 'bg-red-600 text-white px-4 py-3 text-sm flex flex-wrap items-center justify-between gap-2 shrink-0';
+        banner.innerHTML = `<span><strong>Access limited:</strong> ${sub.reason || 'Payment required.'}</span>
+          <button onclick="showPage('billing')" class="bg-white text-red-700 font-semibold px-3 py-1.5 rounded-lg text-xs">Pay / Subscription</button>`;
+        banner.style.display = 'flex';
+        document.querySelectorAll('.nav-item[data-page]').forEach(el => {
+          const pg = el.dataset.page;
+          if (!['billing','settings'].includes(pg)) {
+            el.classList.add('opacity-40','pointer-events-none');
+            el.title = 'Pay subscription to unlock';
+          }
+        });
+      } else if (banner) {
+        banner.style.display = 'none';
+        banner.innerHTML = '';
+        document.querySelectorAll('.nav-item[data-page]').forEach(el => {
+          el.classList.remove('opacity-40','pointer-events-none');
+          el.title = '';
+        });
+      }
+    } catch (_) {}
+
+    await showPage(currentUser.role === 'platform_admin' ? 'admin-home' : (window.subscriptionState && window.subscriptionState.locked ? 'billing' : 'dashboard'));
     if (window.lucide) lucide.createIcons();
   } catch (err) {
     console.error('bootApp UI error', err);
@@ -209,6 +249,12 @@ const titles = {
 };
 
 async function showPage(page) {
+  // Locked companies may only open billing + settings
+  if (currentUser && currentUser.role !== 'platform_admin' && window.subscriptionState && window.subscriptionState.locked) {
+    if (!['billing','settings'].includes(page)) {
+      page = 'billing'; // SUBSCRIPTION_LOCKED_PAGE
+    }
+  }
   // Platform admin must not see SaaS payment plans
   if (currentUser && currentUser.role === 'platform_admin' && page === 'billing') {
     page = 'admin-companies';
@@ -449,9 +495,16 @@ async function saveDriver() {
 
 async function renderBilling() {
   const b = await api('/api/billing/summary');
+  const locked = window.subscriptionState && window.subscriptionState.locked;
+  const lockNote = locked ? `<div class="bg-red-50 border border-red-200 text-red-800 rounded-xl p-4 text-sm mb-4">
+    <strong>Your access is limited until payment is confirmed.</strong><br>
+    ${window.subscriptionState.reason || ''}
+    <br><span class="text-xs mt-1 block">Pay with mobile money below, or send M-Pesa to MlimaniFleet and ask them to mark you paid.</span>
+  </div>` : '';
   const tiers = (await api('/api/pricing')).tiers;
   return `
   <div class="page-enter space-y-6">
+    ${lockNote}
     <div class="grid lg:grid-cols-3 gap-5">
       <div class="lg:col-span-2 bg-white rounded-xl border p-6">
         <h3 class="font-semibold text-lg">Current subscription</h3>
@@ -586,7 +639,10 @@ async function renderAdminHome() {
         <ul class="divide-y max-h-64 overflow-y-auto text-sm">
           ${delayed.map(c => `<li class="px-5 py-3 flex justify-between gap-2">
             <div><div class="font-medium">${esc(c.name)}</div><div class="text-xs text-slate-400">${c.subscription_status} · next ${c.next_billing_date||c.trial_ends||'—'} · ${c.phone||c.email||''}</div></div>
-            <button onclick="adminSetStatus('${c.id}','past_due')" class="text-xs text-amber-700 font-medium">Mark past due</button>
+            <div class="flex flex-col gap-1 items-end">
+              <button onclick="adminMarkPaid('${c.id}')" class="text-xs bg-emerald-600 text-white px-2 py-1 rounded-lg font-medium">Mark paid</button>
+              <button onclick="adminSetStatus('${c.id}','past_due')" class="text-xs text-amber-700 font-medium">Past due</button>
+            </div>
           </li>`).join('') || '<li class="px-5 py-8 text-center text-slate-400">No delayed clients</li>'}
         </ul>
       </div>
@@ -622,7 +678,7 @@ async function renderAdminHome() {
       <div class="overflow-x-auto">
         <table class="w-full text-sm min-w-[640px]">
           <thead><tr class="text-left text-xs text-slate-500 bg-slate-50 border-b">
-            <th class="px-5 py-2">Company</th><th class="py-2">Status</th><th class="py-2">Vehicles</th><th class="py-2">Paid total</th><th class="py-2">Next bill</th><th class="py-2">Contact</th>
+            <th class="px-5 py-2">Company</th><th class="py-2">Status</th><th class="py-2">Vehicles</th><th class="py-2">Paid total</th><th class="py-2">Next bill</th><th class="py-2">Contact</th><th class="py-2 text-right">Actions</th>
           </tr></thead>
           <tbody class="divide-y">
             ${clients.slice(0,15).map(c => `<tr class="hover:bg-slate-50">
@@ -632,7 +688,12 @@ async function renderAdminHome() {
               <td class="py-2">TZS ${fmt(c.total_paid_tzs||0)}</td>
               <td class="py-2 text-xs">${c.next_billing_date||c.trial_ends||'—'}</td>
               <td class="py-2 text-xs">${c.phone||c.email||'—'}</td>
-            </tr>`).join('') || '<tr><td colspan="6" class="px-5 py-8 text-center text-slate-400">No clients</td></tr>'}
+              <td class="py-2 text-right whitespace-nowrap space-x-1">
+                <button onclick="adminMarkPaid('${c.id}')" class="text-xs bg-emerald-600 text-white px-2 py-1 rounded-md font-medium">Mark paid</button>
+                <button onclick="adminSetStatus('${c.id}','past_due')" class="text-xs text-amber-700">Past due</button>
+                <button onclick="adminSuspend('${c.id}')" class="text-xs text-red-600">Suspend</button>
+              </td>
+            </tr>`).join('') || '<tr><td colspan="7" class="px-5 py-8 text-center text-slate-400">No clients</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -667,6 +728,26 @@ async function renderAdminPayments() {
       </table>
     </div>
   </div>`;
+}
+
+
+async function adminMarkPaid(companyId) {
+  const note = prompt('Optional note (e.g. M-Pesa ref)', 'Manual M-Pesa payment') || 'Manual payment';
+  const amountStr = prompt('Amount received (TZS), optional', '');
+  try {
+    const body = { days: 30, note };
+    if (amountStr) body.amount_tzs = Number(amountStr.replace(/,/g, ''));
+    const r = await api('/api/admin/companies/' + companyId + '/mark-paid', { method: 'POST', body: JSON.stringify(body) });
+    alert(r.message || 'Marked paid');
+    showPage('admin-home');
+  } catch (e) { alert(e.message); }
+}
+async function adminSuspend(companyId) {
+  if (!confirm('Suspend this company? They will be locked until you mark paid.')) return;
+  try {
+    await api('/api/admin/companies/' + companyId, { method: 'PATCH', body: JSON.stringify({ subscription_status: 'suspended' }) });
+    showPage('admin-home');
+  } catch (e) { alert(e.message); }
 }
 
 async function adminSetStatus(companyId, status) {
@@ -830,18 +911,24 @@ async function renderAdminCompanies() {
   const { companies } = await api('/api/admin/companies');
   return `
   <div class="page-enter bg-white rounded-xl border overflow-hidden">
+    <div class="px-5 py-3 border-b text-sm text-slate-500">After a client pays by M-Pesa, click <strong class="text-emerald-700">Mark paid</strong> to unlock them for 30 days.</div>
     <table class="w-full text-sm">
       <thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
-        <th class="px-5 py-3">Company</th><th class="py-3">Email</th><th class="py-3">Vehicles</th><th class="py-3">Status</th><th class="py-3">Next bill</th>
+        <th class="px-5 py-3">Company</th><th class="py-3">Contact</th><th class="py-3">Vehicles</th><th class="py-3">Status</th><th class="py-3">Next bill</th><th class="py-3 text-right">Actions</th>
       </tr></thead>
       <tbody class="divide-y">
         ${companies.map(c => `
           <tr>
-            <td class="px-5 py-3 font-medium">${c.name}</td>
-            <td class="py-3">${c.email}</td>
+            <td class="px-5 py-3 font-medium">${esc(c.name)}</td>
+            <td class="py-3 text-xs">${esc(c.phone||c.email||'—')}</td>
             <td class="py-3">${c.vehicle_count} / ${c.vehicle_limit}</td>
-            <td class="py-3"><span class="text-xs px-2 py-0.5 rounded ${c.subscription_status==='active'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}">${c.subscription_status}</span></td>
-            <td class="py-3">${c.next_billing_date||'—'}</td>
+            <td class="py-3"><span class="text-xs px-2 py-0.5 rounded ${c.subscription_status==='active'?'bg-emerald-50 text-emerald-700':c.subscription_status==='suspended'?'bg-red-50 text-red-700':'bg-amber-50 text-amber-700'}">${c.subscription_status}</span></td>
+            <td class="py-3 text-xs">${c.next_billing_date||c.trial_ends||'—'}</td>
+            <td class="py-3 text-right whitespace-nowrap space-x-1">
+              <button onclick="adminMarkPaid('${c.id}')" class="text-xs bg-emerald-600 text-white px-2 py-1 rounded-md font-medium">Mark paid</button>
+              <button onclick="adminSetStatus('${c.id}','past_due')" class="text-xs text-amber-700">Past due</button>
+              <button onclick="adminSuspend('${c.id}')" class="text-xs text-red-600">Suspend</button>
+            </td>
           </tr>`).join('')}
       </tbody>
     </table>

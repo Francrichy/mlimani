@@ -1016,6 +1016,7 @@ async function completeMaint(id) {
 async function renderFuel() {
   const [{ logs, summary }, { vehicles }] = await Promise.all([api('/api/fuel'), api('/api/vehicles')]);
   const vMap = Object.fromEntries(vehicles.map(v => [v.id, v.plate]));
+  const today = new Date().toISOString().slice(0, 10);
   return `
   <div class="page-enter space-y-5">
     <div class="grid sm:grid-cols-4 gap-4">
@@ -1024,57 +1025,120 @@ async function renderFuel() {
       <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">All-time liters</div><div class="text-2xl font-bold mt-1">${fmt(summary.total_liters)}</div></div>
       <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">All-time cost</div><div class="text-2xl font-bold mt-1">TZS ${fmt(summary.total_cost_tzs)}</div></div>
     </div>
-    <div class="flex justify-between">
-      <p class="text-sm text-slate-500">${logs.length} log(s)</p>
-      <button onclick="document.getElementById('fuel-form').classList.toggle('hidden')" class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2">
+    <div class="flex justify-between items-center">
+      <p class="text-sm text-slate-500">${logs.length} fuel log(s)</p>
+      <button onclick="document.getElementById('fuel-form').classList.toggle('hidden')" class="bg-brand-600 text-white text-sm px-4 py-2.5 rounded-xl font-medium flex items-center gap-2">
         <i data-lucide="plus" class="w-4 h-4"></i> Log fuel
       </button>
     </div>
-    <div id="fuel-form" class="hidden bg-white rounded-xl border p-5 space-y-3">
-      <div class="grid sm:grid-cols-3 gap-3">
-        <select id="f-vehicle" class="border rounded-lg px-3 py-2 text-sm"><option value="">Vehicle</option>${vehicles.map(v=>`<option value="${v.id}">${v.plate}</option>`).join('')}</select>
-        <input id="f-liters" type="number" step="0.1" placeholder="Liters" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="f-cost" type="number" placeholder="Cost TZS" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="f-odo" type="number" placeholder="Odometer km" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="f-station" placeholder="Station" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="f-date" type="date" class="border rounded-lg px-3 py-2 text-sm">
+
+    <div id="fuel-form" class="hidden bg-white rounded-2xl border border-brand-100 shadow-sm p-6 space-y-4">
+      <div>
+        <h3 class="font-semibold text-slate-900">Record fuel fill</h3>
+        <p class="text-sm text-slate-500 mt-0.5">Select truck → enter litres → enter price per litre → total is calculated automatically</p>
       </div>
-      <button onclick="saveFuel()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm">Save</button>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div class="sm:col-span-2 lg:col-span-1">
+          <label class="text-xs font-medium text-slate-600">Vehicle / truck *</label>
+          <select id="f-vehicle" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+            <option value="">Select plate number</option>
+            ${vehicles.map(v => `<option value="${v.id}">${v.plate} · ${v.make||''} ${v.model||''} (${v.type||''})</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-slate-600">Litres filled *</label>
+          <input id="f-liters" type="number" step="0.01" min="0.01" placeholder="e.g. 180"
+            oninput="calcFuelTotal()" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        </div>
+        <div>
+          <label class="text-xs font-medium text-slate-600">Price per litre (TZS) *</label>
+          <input id="f-price" type="number" step="1" min="1" placeholder="e.g. 3200"
+            oninput="calcFuelTotal()" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        </div>
+        <div>
+          <label class="text-xs font-medium text-slate-600">Total cost (auto)</label>
+          <div id="f-total-display" class="mt-1 w-full border border-emerald-200 bg-emerald-50 rounded-xl px-3 py-2.5 text-sm font-bold text-emerald-800">
+            TZS 0
+          </div>
+          <input type="hidden" id="f-cost" value="0">
+        </div>
+        <div>
+          <label class="text-xs font-medium text-slate-600">Station / location</label>
+          <input id="f-station" placeholder="e.g. PUMA Ubungo" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        </div>
+        <div>
+          <label class="text-xs font-medium text-slate-600">Odometer (km)</label>
+          <input id="f-odo" type="number" placeholder="Optional" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        </div>
+        <div>
+          <label class="text-xs font-medium text-slate-600">Date filled</label>
+          <input id="f-date" type="date" value="${today}" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm">
+        </div>
+      </div>
+      <button onclick="saveFuel()" class="bg-brand-600 hover:bg-brand-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold">Save fuel log</button>
     </div>
+
     <div class="bg-white rounded-xl border overflow-hidden">
       <table class="w-full text-sm">
-        <thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
-          <th class="px-5 py-3">Date</th><th class="py-3">Vehicle</th><th class="py-3">Liters</th><th class="py-3">Cost</th><th class="py-3">Odometer</th><th class="py-3">Station</th>
-        </tr></thead>
+        <thead>
+          <tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
+            <th class="px-5 py-3">Date</th>
+            <th class="py-3">Vehicle</th>
+            <th class="py-3 text-right">Litres</th>
+            <th class="py-3 text-right">Price / L</th>
+            <th class="py-3 text-right">Total cost</th>
+            <th class="py-3">Station</th>
+            <th class="py-3 text-right">Odo</th>
+          </tr>
+        </thead>
         <tbody class="divide-y">
-          ${logs.slice().reverse().map(l => `
-            <tr>
-              <td class="px-5 py-3">${l.filled_at||'—'}</td>
+          ${logs.map(l => {
+            const price = l.price_per_liter != null ? l.price_per_liter : (l.liters ? Math.round((l.cost_tzs||0)/l.liters) : 0);
+            return `<tr class="hover:bg-slate-50">
+              <td class="px-5 py-3 text-xs text-slate-500">${(l.filled_at||'').slice(0,10)}</td>
               <td class="py-3 font-medium">${vMap[l.vehicle_id]||'—'}</td>
-              <td class="py-3">${l.liters}</td>
-              <td class="py-3">TZS ${fmt(l.cost_tzs||0)}</td>
-              <td class="py-3">${fmt(l.odometer||0)} km</td>
-              <td class="py-3">${l.station||'—'}</td>
-            </tr>`).join('') || '<tr><td colspan="6" class="px-5 py-10 text-center text-slate-400">No fuel logs</td></tr>'}
+              <td class="py-3 text-right font-medium">${l.liters||0}</td>
+              <td class="py-3 text-right text-slate-600">TZS ${fmt(price)}</td>
+              <td class="py-3 text-right font-bold text-slate-900">TZS ${fmt(l.cost_tzs||0)}</td>
+              <td class="py-3 text-xs text-slate-500">${l.station||'—'}</td>
+              <td class="py-3 text-right text-xs text-slate-500">${l.odometer ? fmt(l.odometer)+' km' : '—'}</td>
+            </tr>`;
+          }).join('') || '<tr><td colspan="7" class="px-5 py-10 text-center text-slate-400">No fuel logs yet</td></tr>'}
         </tbody>
       </table>
     </div>
   </div>`;
 }
+function calcFuelTotal() {
+  const liters = parseFloat(document.getElementById('f-liters')?.value) || 0;
+  const price = parseFloat(document.getElementById('f-price')?.value) || 0;
+  const total = Math.round(liters * price);
+  const el = document.getElementById('f-total-display');
+  const hid = document.getElementById('f-cost');
+  if (el) el.textContent = 'TZS ' + (total ? total.toLocaleString() : '0');
+  if (hid) hid.value = total;
+}
 async function saveFuel() {
   try {
+    const vehicle_id = document.getElementById('f-vehicle').value;
+    const liters = parseFloat(document.getElementById('f-liters').value) || 0;
+    const price_per_liter = parseFloat(document.getElementById('f-price').value) || 0;
+    if (!vehicle_id) throw new Error('Select a vehicle from the list');
+    if (liters <= 0) throw new Error('Enter litres filled');
+    if (price_per_liter <= 0) throw new Error('Enter fuel price per litre');
+    const cost_tzs = Math.round(liters * price_per_liter);
     await api('/api/fuel', { method:'POST', body: JSON.stringify({
-      vehicle_id: document.getElementById('f-vehicle').value,
-      liters: +document.getElementById('f-liters').value,
-      cost_tzs: +document.getElementById('f-cost').value,
-      odometer: +document.getElementById('f-odo').value,
+      vehicle_id,
+      liters,
+      price_per_liter,
+      cost_tzs,
+      odometer: +document.getElementById('f-odo').value || 0,
       station: document.getElementById('f-station').value,
       filled_at: document.getElementById('f-date').value
     })});
     showPage('fuel');
   } catch(e) { alert(e.message); }
 }
-
 
 async function renderTracking() {
   let positions = [];

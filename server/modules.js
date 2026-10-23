@@ -90,15 +90,29 @@ function listFuel(auth) {
 
 function createFuel(auth, body) {
   if (!auth.company_id) throw new Error('No company');
+  if (!body.vehicle_id) throw new Error('Select a vehicle / truck');
+  const liters = Number(body.liters) || 0;
+  if (liters <= 0) throw new Error('Enter litres filled');
+  let pricePerLiter = Number(body.price_per_liter);
+  if (!pricePerLiter || pricePerLiter <= 0) {
+    // fallback: if only total cost given
+    const totalOnly = Number(body.cost_tzs) || 0;
+    if (totalOnly > 0 && liters > 0) pricePerLiter = totalOnly / liters;
+  }
+  if (!pricePerLiter || pricePerLiter <= 0) throw new Error('Enter fuel price per litre (TZS)');
+  const cost_tzs = Math.round(liters * pricePerLiter);
   const log = {
     id: uid(),
     company_id: auth.company_id,
     vehicle_id: body.vehicle_id || null,
-    liters: Number(body.liters) || 0,
-    cost_tzs: Number(body.cost_tzs) || 0,
-    odometer: body.odometer || 0,
+    liters,
+    price_per_liter: pricePerLiter,
+    cost_tzs,
+    odometer: Number(body.odometer) || 0,
     station: body.station || '',
+    location: body.location || '',
     filled_at: body.filled_at || now().slice(0, 10),
+    notes: body.notes || '',
     created_at: now()
   };
   const all = read('fuel_logs') || [];

@@ -130,6 +130,7 @@ const SUBSCRIPTION_FREE_PATHS = [
   '/api/auth/register',
   '/api/billing/summary',
   '/api/billing/pay',
+  '/api/billing/upgrade-slots',
   '/api/pricing',
   '/api/company/profile',
   '/api/webhooks/selcom',
@@ -335,8 +336,9 @@ async function handleApi(req, res, pathname) {
       phone: phone || '',
       email: email.includes('@phone.mlimanifleet') ? '' : email,
       subscription_status: 'trial',
-      vehicle_limit: 5,
+      vehicle_limit: Math.min(100, Math.max(1, Number(body.planned_vehicles) || Number(body.vehicle_slots) || 1)),
       current_vehicles: 0,
+      paid_vehicle_slots: 0, // after payment, slots they have paid for; during trial limit is planned
       next_billing_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
       trial_ends: new Date(Date.now() + 7 * 86400000).toISOString(),
       tin: '', vrn: '', address: '', city: '', vat_default: false,
@@ -535,7 +537,20 @@ async function handleApi(req, res, pathname) {
     companies[i].next_billing_date = next;
     companies[i].last_manual_payment_at = now();
     companies[i].last_manual_payment_note = body.note || 'Manual payment confirmed by platform owner';
-    if (body.vehicle_limit != null) companies[i].vehicle_limit = Number(body.vehicle_limit);
+    if (body.vehicle_limit != null) {
+      companies[i].vehicle_limit = Number(body.vehicle_limit);
+      companies[i].paid_vehicle_slots = Number(body.vehicle_limit);
+    } else if (body.vehicle_count != null) {
+      companies[i].vehicle_limit = Number(body.vehicle_count);
+      companies[i].paid_vehicle_slots = Number(body.vehicle_count);
+    } else {
+      // Keep limit; ensure at least current fleet size
+      const vcount = (read('vehicles') || []).filter(v => v.company_id === id).length;
+      if (vcount > (companies[i].vehicle_limit || 0)) {
+        companies[i].vehicle_limit = vcount;
+        companies[i].paid_vehicle_slots = vcount;
+      }
+    }
     write('companies', companies);
 
     // Optional payment record for owner reports
@@ -651,6 +666,91 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
       monthly_amount: amount,
       payments,
       providers: TZA_PROVIDERS
+    });
+  }
+
+
+  if (pathname === '/api/billing/upgrade-slots' && method === 'POST') {
+    const auth = requireAuth(req, res);
+    if (!auth) return;
+    if (auth.role === 'platform_admin') return send(res, 403, { error: 'Not for platform admin' });
+    if (!auth.company_id) return send(res, 400, { error: 'No company' });
+    const additional = Math.min(100, Math.max(1, Number(body.additional_vehicles) || 1));
+    const company = read('companies').find(c => c.id === auth.company_id);
+    if (!company) return send(res, 404, { error: 'Company not found' });
+    const vehicles = read('vehicles').filter(v => v.company_id === auth.company_id);
+    const currentLimit = Number(company.vehicle_limit) || 0;
+    const newLimit = currentLimit + additional;
+    const { amount: rate } = priceForCount(1);
+    const unit = rate || 10000;
+    const amount = additional * unit;
+    // Quote only if no payment phone — or initiate payment
+    if (!body.phone && !body.confirm_quote_only) {
+      return send(res, 200, {
+        quote: true,
+        additional_vehicles: additional,
+        current_limit: currentLimit,
+        new_limit: newLimit,
+        current_vehicles: vehicles.length,
+        price_per_vehicle_tzs: unit,
+        amount_tzs: amount,
+        message: `Pay TZS ${amount.toLocaleString()} to increase limit from ${currentLimit} to ${newLimit} vehicles`
+      });
+    }
+    // Record pending upgrade payment (manual or gateway)
+    const orderId = uid();
+    const payments = read('payments') || [];
+    payments.push({
+      id: orderId,
+      company_id: auth.company_id,
+      amount,
+      currency: 'TZS',
+      phone: body.phone || company.phone || '',
+      gateway: body.gateway || 'manual_pending',
+      provider: body.provider || null,
+      status: body.mark_pending === false ? 'pending' : 'pending',
+      vehicle_count: newLimit,
+      upgrade_additional: additional,
+      previous_limit: currentLimit,
+      new_limit: newLimit,
+      purpose: 'vehicle_slots',
+      created_at: now()
+    });
+    write('payments', payments);
+
+    // If DEMO payment mode, auto-apply upgrade
+    if (DEMO || body.simulate_paid) {
+      const companies = read('companies');
+      const ci = companies.findIndex(c => c.id === auth.company_id);
+      if (ci >= 0) {
+        companies[ci].vehicle_limit = newLimit;
+        companies[ci].paid_vehicle_slots = newLimit;
+        companies[ci].subscription_status = 'active';
+        companies[ci].next_billing_date = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+        write('companies', companies);
+      }
+      const pi = payments.findIndex(p => p.id === orderId);
+      if (pi >= 0) {
+        payments[pi].status = 'completed';
+        payments[pi].completed_at = now();
+        write('payments', payments);
+      }
+      return send(res, 200, {
+        ok: true,
+        activated: true,
+        vehicle_limit: newLimit,
+        amount_tzs: amount,
+        message: `Slots increased to ${newLimit}. You can add more vehicles now.`
+      });
+    }
+
+    return send(res, 200, {
+      ok: true,
+      pending: true,
+      payment_id: orderId,
+      amount_tzs: amount,
+      new_limit: newLimit,
+      message: 'Payment initiated. After M-Pesa is confirmed, platform owner can Mark paid with the new vehicle limit.'
     });
   }
 
@@ -773,16 +873,31 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
     if (!auth || !auth.company_id) return send(res, 400, { error: 'No company' });
     const company = read('companies').find(c => c.id === auth.company_id);
     const vehicles = read('vehicles').filter(v => v.company_id === auth.company_id);
-    if (company && vehicles.length >= (company.vehicle_limit || 5) && company.subscription_status !== 'trial') {
-      return send(res, 402, { error: 'Vehicle limit reached. Please upgrade your plan.' });
+    const limit = Number(company?.vehicle_limit) || 0;
+    if (!company || vehicles.length >= limit) {
+      const need = vehicles.length + 1;
+      const extra = Math.max(1, need - limit);
+      const { amount: unitAmount } = priceForCount(1);
+      const rate = unitAmount || 10000;
+      return send(res, 402, {
+        error: `Vehicle limit reached (${vehicles.length}/${limit}). Pay for more vehicle slots to add another unit.`,
+        code: 'VEHICLE_LIMIT',
+        current_vehicles: vehicles.length,
+        vehicle_limit: limit,
+        extra_slots_needed: extra,
+        price_per_vehicle_tzs: rate,
+        upgrade_amount_tzs: extra * rate
+      });
     }
     const { plate, type, make, model, year, status } = body;
     if (!plate || !type) return send(res, 400, { error: 'plate and type required' });
+    const allowedTypes = ['truck', 'daladala', 'tipper', 'bus', 'pickup', 'trailer', 'other'];
+    const vtype = allowedTypes.includes(type) ? type : 'truck';
     const vehicle = {
       id: uid(),
       company_id: auth.company_id,
       plate: plate.toUpperCase(),
-      type: type === 'daladala' ? 'daladala' : 'truck',
+      type: vtype,
       make: make || '',
       model: model || '',
       year: year || null,

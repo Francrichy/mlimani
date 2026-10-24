@@ -71,6 +71,7 @@ async function doRegister(e) {
         name: (document.getElementById('reg-name')?.value || '').trim(),
         email,
         phone,
+        planned_vehicles: +(document.getElementById('reg-vehicles')?.value || 1),
         password: document.getElementById('reg-password').value
       })
     });
@@ -366,11 +367,27 @@ async function renderVehicles() {
   const { vehicles } = await api('/api/vehicles');
   return `
   <div class="page-enter space-y-5">
-    <div class="flex justify-between items-center">
-      <p class="text-sm text-slate-500">${vehicles.length} vehicle(s)</p>
-      <button onclick="openAddVehicle()" class="bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-2">
-        <i data-lucide="plus" class="w-4 h-4"></i> Add vehicle
-      </button>
+    <div class="flex flex-wrap justify-between items-center gap-3">
+      <div>
+        <p class="text-sm text-slate-600"><span class="font-semibold text-slate-900">${vehicles.length}</span> registered
+          · slot limit <span class="font-semibold">${currentCompany?.vehicle_limit ?? '—'}</span>
+          ${vehicles.length >= (currentCompany?.vehicle_limit||0) ? '<span class="ml-2 text-xs text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Full — pay to add more</span>' : ''}
+        </p>
+        <p class="text-xs text-slate-400 mt-0.5">Monthly fee after trial: TZS ${((currentCompany?.vehicle_limit||vehicles.length||1)*10000).toLocaleString()} (${currentCompany?.vehicle_limit||vehicles.length||1} × 10,000)</p>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="requestMoreVehicleSlots()" class="border border-slate-200 hover:bg-slate-50 text-sm px-4 py-2 rounded-lg font-medium">Buy more slots</button>
+        <button onclick="openAddVehicle()" class="bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-4 py-2 rounded-lg flex items-center gap-2">
+          <i data-lucide="plus" class="w-4 h-4"></i> Add vehicle
+        </button>
+      </div>
+    </div>
+    <div id="vehicle-upgrade" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-950">
+      <strong>No free slots left.</strong> You have used all paid/trial vehicle slots.
+      <div class="mt-2 flex flex-wrap gap-2">
+        <button onclick="requestMoreVehicleSlots()" class="bg-brand-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Pay for extra vehicles</button>
+        <button onclick="showPage('billing')" class="border border-amber-300 px-3 py-1.5 rounded-lg text-xs font-medium">Open subscription</button>
+      </div>
     </div>
     <div id="add-vehicle-form" class="hidden bg-white rounded-xl border border-slate-200 p-5 space-y-4">
       <h3 class="font-semibold">New vehicle</h3>
@@ -733,9 +750,11 @@ async function renderAdminPayments() {
 
 async function adminMarkPaid(companyId) {
   const note = prompt('Optional note (e.g. M-Pesa ref)', 'Manual M-Pesa payment') || 'Manual payment';
+  const slotsStr = prompt('Vehicle slots allowed after payment (how many trucks they paid for)', '1');
   const amountStr = prompt('Amount received (TZS), optional', '');
   try {
     const body = { days: 30, note };
+    if (slotsStr) body.vehicle_limit = Math.max(1, parseInt(slotsStr, 10) || 1);
     if (amountStr) body.amount_tzs = Number(amountStr.replace(/,/g, ''));
     const r = await api('/api/admin/companies/' + companyId + '/mark-paid', { method: 'POST', body: JSON.stringify(body) });
     alert(r.message || 'Marked paid');

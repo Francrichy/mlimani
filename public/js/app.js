@@ -797,6 +797,16 @@ async function renderSettings() {
       <button onclick="saveProfile()" class="bg-brand-600 text-white px-4 py-2.5 rounded-xl text-sm font-semibold">Save profile</button>
     </div>
 
+    <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4" id="fx-settings-box">
+      <h3 class="font-semibold text-lg">USD exchange rate (trips)</h3>
+      <p class="text-sm text-slate-500">Used when a trip is paid in USD (transit). 1 USD = ? TZS. You can still change the rate on each trip.</p>
+      <div>
+        <label class="text-sm font-medium text-slate-700">Default TZS per 1 USD</label>
+        <input id="set-fx-rate" type="number" min="1" step="1" value="${Number(currentCompany?.usd_tzs_rate)||2600}" class="mt-1 w-full border rounded-xl px-3 py-2.5 text-sm">
+      </div>
+      <button onclick="saveFxRate()" class="bg-brand-600 text-white px-4 py-2.5 rounded-xl text-sm font-semibold">Save exchange rate</button>
+    </div>
+
     <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
       <h3 class="font-semibold text-lg">Change password</h3>
       <p class="text-sm text-slate-500">Use a strong password. You will stay signed in after changing it.</p>
@@ -833,6 +843,15 @@ async function saveProfile() {
   } catch (e) { alert(e.message); }
 }
 
+async function saveFxRate() {
+  try {
+    const rate = +document.getElementById('set-fx-rate').value;
+    if (!rate || rate < 1) throw new Error('Enter a valid rate');
+    const data = await api('/api/company/profile', { method: 'PUT', body: JSON.stringify({ usd_tzs_rate: rate }) });
+    currentCompany = { ...(currentCompany || {}), ...(data.company || { usd_tzs_rate: rate }) };
+    alert('Exchange rate saved: 1 USD = ' + rate.toLocaleString() + ' TZS');
+  } catch (e) { alert(e.message); }
+}
 async function changePassword() {
   const msg = document.getElementById('set-pass-msg');
   const a = document.getElementById('set-new-pass').value;
@@ -962,55 +981,105 @@ async function renderTrips() {
   ]);
   const vMap = Object.fromEntries(vehicles.map(v => [v.id, v.plate]));
   const dMap = Object.fromEntries(drivers.map(d => [d.id, d.name]));
+  const fxDefault = Number(currentCompany?.usd_tzs_rate) || 2600;
+  const totalTzs = trips.reduce((s, t) => s + (Number(t.revenue_tzs) || 0), 0);
+  const totalUsd = trips.reduce((s, t) => s + (Number(t.revenue_usd) || 0), 0);
   return `
   <div class="page-enter space-y-5">
-    <div class="flex justify-between items-center">
-      <p class="text-sm text-slate-500">${trips.length} trip(s)</p>
+    <div class="grid sm:grid-cols-3 gap-4">
+      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Trips</div><div class="text-2xl font-bold mt-1">${trips.length}</div></div>
+      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Revenue (TZS books)</div><div class="text-xl font-bold mt-1">TZS ${fmt(totalTzs)}</div></div>
+      <div class="bg-white rounded-xl border p-4"><div class="text-xs text-slate-500">Revenue recorded in USD</div><div class="text-xl font-bold mt-1">USD ${fmt(totalUsd)}</div>
+        <div class="text-xs text-slate-400 mt-1">Default rate: 1 USD = ${fmt(fxDefault)} TZS</div></div>
+    </div>
+    <div class="flex justify-between items-center flex-wrap gap-2">
+      <p class="text-sm text-slate-500">Local jobs in TZS · Transit often in USD (converted for P&amp;L)</p>
       <button onclick="document.getElementById('trip-form').classList.toggle('hidden')" class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2">
         <i data-lucide="plus" class="w-4 h-4"></i> New trip
       </button>
     </div>
-    <div id="trip-form" class="hidden bg-white rounded-xl border p-5 space-y-3">
+    <div id="trip-form" class="hidden bg-white rounded-2xl border p-5 space-y-3">
+      <h3 class="font-semibold">Log trip &amp; payment</h3>
       <div class="grid sm:grid-cols-3 gap-3">
-        <select id="t-vehicle" class="border rounded-lg px-3 py-2 text-sm"><option value="">Vehicle</option>${vehicles.map(v=>`<option value="${v.id}">${v.plate}</option>`).join('')}</select>
+        <select id="t-vehicle" class="border rounded-lg px-3 py-2 text-sm"><option value="">Vehicle *</option>${vehicles.map(v=>`<option value="${v.id}">${v.plate}</option>`).join('')}</select>
         <select id="t-driver" class="border rounded-lg px-3 py-2 text-sm"><option value="">Driver</option>${drivers.map(d=>`<option value="${d.id}">${d.name}</option>`).join('')}</select>
-        <select id="t-type" class="border rounded-lg px-3 py-2 text-sm"><option value="long_haul">Long haul</option><option value="daladala">Dala dala</option></select>
+        <select id="t-type" class="border rounded-lg px-3 py-2 text-sm">
+          <option value="local">Local (TZ)</option>
+          <option value="transit">Transit / cross-border</option>
+          <option value="long_haul">Long haul</option>
+          <option value="daladala">Dala dala</option>
+          <option value="hire">Hire / charter</option>
+        </select>
         <input id="t-origin" placeholder="Origin" class="border rounded-lg px-3 py-2 text-sm">
         <input id="t-dest" placeholder="Destination" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="t-revenue" type="number" placeholder="Revenue TZS" class="border rounded-lg px-3 py-2 text-sm">
+        <select id="t-currency" onchange="onTripCurrencyChange()" class="border rounded-lg px-3 py-2 text-sm">
+          <option value="TZS">Paid in TZS (local)</option>
+          <option value="USD">Paid in USD (transit)</option>
+        </select>
+        <input id="t-revenue" type="number" step="0.01" min="0" placeholder="Amount received *" class="border rounded-lg px-3 py-2 text-sm" oninput="calcTripTzs()">
+        <div id="t-fx-wrap" class="hidden">
+          <input id="t-fx" type="number" step="1" min="1" value="${fxDefault}" placeholder="TZS per 1 USD" class="border rounded-lg px-3 py-2 text-sm w-full" oninput="calcTripTzs()">
+        </div>
+        <div id="t-tzs-equiv" class="border border-emerald-100 bg-emerald-50 rounded-lg px-3 py-2 text-sm font-semibold text-emerald-900 flex items-center">TZS equiv: 0</div>
       </div>
-      <button onclick="saveTrip()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm">Save trip</button>
+      <p class="text-xs text-slate-500">USD trips: enter the USD amount and rate (editable). System stores USD + TZS equivalent for reports.</p>
+      <button onclick="saveTrip()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium">Save trip</button>
     </div>
     <div class="bg-white rounded-xl border overflow-hidden">
       <table class="w-full text-sm">
         <thead><tr class="text-left text-xs text-slate-500 border-b bg-slate-50">
-          <th class="px-5 py-3">Route</th><th class="py-3">Vehicle</th><th class="py-3">Driver</th><th class="py-3">Type</th><th class="py-3">Status</th><th class="py-3">Revenue</th>
+          <th class="px-5 py-3">Route</th><th class="py-3">Vehicle</th><th class="py-3">Type</th><th class="py-3">Paid</th><th class="py-3 text-right">TZS (books)</th><th class="py-3">Status</th>
         </tr></thead>
         <tbody class="divide-y">
-          ${trips.map(t => `
-            <tr class="hover:bg-slate-50">
-              <td class="px-5 py-3 font-medium">${t.origin||'—'} → ${t.destination||'—'}</td>
+          ${trips.map(t => {
+            const cur = t.currency || 'TZS';
+            const paid = cur === 'USD'
+              ? `USD ${fmt(t.revenue_usd || t.revenue_amount || 0)}${t.fx_rate ? ' <span class="text-xs text-slate-400">@'+fmt(t.fx_rate)+'</span>' : ''}`
+              : `TZS ${fmt(t.revenue_amount != null ? t.revenue_amount : t.revenue_tzs || 0)}`;
+            return `<tr class="hover:bg-slate-50">
+              <td class="px-5 py-3"><div class="font-medium">${esc(t.origin||'—')} → ${esc(t.destination||'—')}</div>
+                <div class="text-xs text-slate-400">${dMap[t.driver_id]||''}</div></td>
               <td class="py-3">${vMap[t.vehicle_id]||'—'}</td>
-              <td class="py-3">${dMap[t.driver_id]||'—'}</td>
-              <td class="py-3"><span class="text-xs px-2 py-0.5 rounded bg-slate-100">${t.type}</span></td>
+              <td class="py-3 text-xs capitalize">${esc((t.type||'').replace(/_/g,' '))}</td>
+              <td class="py-3 text-xs">${paid}</td>
+              <td class="py-3 text-right font-semibold">TZS ${fmt(t.revenue_tzs||0)}</td>
               <td class="py-3">${statusBadge(t.status==='in_progress'?'on_route':t.status==='completed'?'idle':t.status)}</td>
-              <td class="py-3">TZS ${fmt(t.revenue_tzs||0)}</td>
-            </tr>`).join('') || '<tr><td colspan="6" class="px-5 py-10 text-center text-slate-400">No trips yet</td></tr>'}
+            </tr>`;
+          }).join('') || '<tr><td colspan="6" class="px-5 py-10 text-center text-slate-400">No trips yet</td></tr>'}
         </tbody>
       </table>
     </div>
   </div>`;
 }
+function onTripCurrencyChange() {
+  const cur = document.getElementById('t-currency')?.value;
+  const wrap = document.getElementById('t-fx-wrap');
+  if (wrap) wrap.classList.toggle('hidden', cur !== 'USD');
+  calcTripTzs();
+}
+function calcTripTzs() {
+  const cur = document.getElementById('t-currency')?.value || 'TZS';
+  const amount = parseFloat(document.getElementById('t-revenue')?.value) || 0;
+  const fx = parseFloat(document.getElementById('t-fx')?.value) || (Number(currentCompany?.usd_tzs_rate) || 2600);
+  const tzs = cur === 'USD' ? Math.round(amount * fx) : amount;
+  const el = document.getElementById('t-tzs-equiv');
+  if (el) el.textContent = 'TZS equiv: ' + (tzs ? Number(tzs).toLocaleString() : '0');
+}
 async function saveTrip() {
   try {
+    const currency = document.getElementById('t-currency')?.value || 'TZS';
+    const revenue_amount = +document.getElementById('t-revenue').value || 0;
+    const fx_rate = +document.getElementById('t-fx')?.value || (Number(currentCompany?.usd_tzs_rate) || 2600);
     await api('/api/trips', { method:'POST', body: JSON.stringify({
       vehicle_id: document.getElementById('t-vehicle').value,
       driver_id: document.getElementById('t-driver').value,
       type: document.getElementById('t-type').value,
       origin: document.getElementById('t-origin').value,
       destination: document.getElementById('t-dest').value,
-      revenue_tzs: +document.getElementById('t-revenue').value || 0,
-      status: 'planned'
+      currency,
+      revenue_amount,
+      fx_rate: currency === 'USD' ? fx_rate : undefined,
+      revenue_tzs: currency === 'TZS' ? revenue_amount : Math.round(revenue_amount * fx_rate)
     })});
     showPage('trips');
   } catch(e) { alert(e.message); }

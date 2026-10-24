@@ -15,19 +15,57 @@ function listTrips(auth) {
 
 function createTrip(auth, body) {
   if (!auth.company_id) throw new Error('No company');
+  const companies = read('companies') || [];
+  const company = companies.find(c => c.id === auth.company_id) || {};
+  const defaultRate = Number(company.usd_tzs_rate) || 2600;
+
+  const currency = (body.currency || 'TZS').toUpperCase() === 'USD' ? 'USD' : 'TZS';
+  const amount = Number(body.revenue_amount != null ? body.revenue_amount : body.revenue_tzs) || 0;
+  let fx_rate = Number(body.fx_rate);
+  if (!fx_rate || fx_rate <= 0) fx_rate = defaultRate;
+
+  let revenue_usd = 0;
+  let revenue_tzs = 0;
+  if (currency === 'USD') {
+    revenue_usd = amount;
+    revenue_tzs = Math.round(amount * fx_rate); // TZS equivalent for P&L
+  } else {
+    revenue_tzs = amount;
+    revenue_usd = 0;
+  }
+
+  // Optional second currency leg (e.g. advance TZS + balance USD)
+  const amount2 = Number(body.revenue_amount_2) || 0;
+  const currency2 = (body.currency_2 || '').toUpperCase();
+  if (amount2 > 0 && (currency2 === 'USD' || currency2 === 'TZS')) {
+    if (currency2 === 'USD') {
+      revenue_usd += amount2;
+      revenue_tzs += Math.round(amount2 * fx_rate);
+    } else {
+      revenue_tzs += amount2;
+    }
+  }
+
+  const tripTypes = ['long_haul', 'transit', 'local', 'daladala', 'hire'];
+  const type = tripTypes.includes(body.type) ? body.type : (body.type === 'daladala' ? 'daladala' : 'local');
+
   const trip = {
     id: uid(),
     company_id: auth.company_id,
     vehicle_id: body.vehicle_id || null,
     driver_id: body.driver_id || null,
-    type: body.type === 'daladala' ? 'daladala' : 'long_haul',
+    type,
     origin: body.origin || '',
     destination: body.destination || '',
     status: body.status || 'planned',
     started_at: body.started_at || null,
     ended_at: body.ended_at || null,
-    distance_km: body.distance_km || 0,
-    revenue_tzs: body.revenue_tzs || 0,
+    distance_km: Number(body.distance_km) || 0,
+    currency,                 // primary currency paid
+    revenue_amount: amount,   // amount in primary currency
+    revenue_usd,
+    revenue_tzs,              // always TZS equivalent for reports
+    fx_rate: currency === 'USD' || currency2 === 'USD' ? fx_rate : null,
     notes: body.notes || '',
     created_at: now()
   };

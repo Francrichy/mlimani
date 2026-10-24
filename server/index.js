@@ -212,6 +212,7 @@ function seedIfEmpty() {
     address: 'Dar es Salaam, Tanzania',
     city: 'Dar es Salaam',
     vat_default: false,
+    usd_tzs_rate: 2600,
     invoice_footer: 'Thank you for your business',
 
     vehicle_limit: 10,
@@ -341,7 +342,7 @@ async function handleApi(req, res, pathname) {
       paid_vehicle_slots: 0, // after payment, slots they have paid for; during trial limit is planned
       next_billing_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
       trial_ends: new Date(Date.now() + 7 * 86400000).toISOString(),
-      tin: '', vrn: '', address: '', city: '', vat_default: false,
+      tin: '', vrn: '', address: '', city: '', vat_default: false, usd_tzs_rate: 2600,
       invoice_footer: 'Thank you for your business',
       created_at: now()
     });
@@ -643,7 +644,7 @@ async function handleApi(req, res, pathname) {
     const all = read('companies');
     const i = all.findIndex(x => x.id === auth.company_id);
     if (i < 0) return send(res, 404, { error: 'Not found' });
-    const fields = ['name','phone','email','address','city','tin','vrn','vat_default','invoice_footer'];
+    const fields = ['name','phone','email','address','city','tin','vrn','vat_default','invoice_footer','usd_tzs_rate'];
     for (const f of fields) if (body[f] !== undefined) all[i][f] = body[f];
     write('companies', all);
     return send(res, 200, { company: all[i] });

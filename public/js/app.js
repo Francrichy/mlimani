@@ -370,10 +370,13 @@ async function renderVehicles() {
     <div class="flex flex-wrap justify-between items-center gap-3">
       <div>
         <p class="text-sm text-slate-600"><span class="font-semibold text-slate-900">${vehicles.length}</span> registered
-          · slot limit <span class="font-semibold">${currentCompany?.vehicle_limit ?? '—'}</span>
-          ${vehicles.length >= (currentCompany?.vehicle_limit||0) ? '<span class="ml-2 text-xs text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Full — pay to add more</span>' : ''}
+          · slot limit <span class="font-semibold">${currentCompany?.subscription_status==='trial' ? Math.max(Number(currentCompany?.vehicle_limit)||0, 10) : (currentCompany?.vehicle_limit ?? '—')}</span>
+          ${vehicles.length >= (currentCompany?.subscription_status==='trial' ? Math.max(Number(currentCompany?.vehicle_limit)||0, 10) : (currentCompany?.vehicle_limit||0))
+            ? '<span class="ml-2 text-xs text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Full — pay to add more</span>' : ''}
         </p>
-        <p class="text-xs text-slate-400 mt-0.5">Monthly fee after trial: TZS ${((currentCompany?.vehicle_limit||vehicles.length||1)*10000).toLocaleString()} (${currentCompany?.vehicle_limit||vehicles.length||1} × 10,000)</p>
+        <p class="text-xs text-slate-400 mt-0.5">${(currentCompany?.subscription_status==='trial')
+          ? 'Trial: you can add up to 10 vehicles free. After trial pay TZS 10,000 per vehicle / month.'
+          : 'Monthly fee: TZS ' + ((currentCompany?.vehicle_limit||vehicles.length||1)*10000).toLocaleString() + ' (' + (currentCompany?.vehicle_limit||vehicles.length||1) + ' × 10,000). Pay TigoPesa 0676 266 814.'}</p>
       </div>
       <div class="flex gap-2">
         <button onclick="requestMoreVehicleSlots()" class="border border-slate-200 hover:bg-slate-50 text-sm px-4 py-2 rounded-lg font-medium">Buy more slots</button>
@@ -545,21 +548,43 @@ async function renderBilling() {
           <div class="text-sm text-brand-200 mt-1">${b.current_tier?.name || '—'} plan · ${b.vehicle_count} vehicle(s)</div>
         </div>
 
-        <h4 class="font-semibold mt-8 mb-3">Pay with mobile money</h4>
-        <div class="space-y-3 max-w-md">
+        <h4 class="font-semibold mt-8 mb-3">Pay subscription</h4>
+
+        <div class="max-w-md mb-5 p-4 rounded-xl border-2 border-brand-200 bg-brand-50 space-y-2">
+          <div class="text-sm font-semibold text-brand-900">Pay direct — TigoPesa (recommended)</div>
+          <p class="text-sm text-slate-700">Send <strong>TZS ${fmt(b.monthly_amount)}</strong> to:</p>
+          <div class="text-2xl font-bold tracking-wide text-slate-900">0676 266 814</div>
+          <p class="text-xs text-slate-600">Name: MlimaniFleet · Network: <strong>TigoPesa</strong></p>
+          <ol class="text-xs text-slate-600 list-decimal ml-4 space-y-1">
+            <li>Open TigoPesa → Send money</li>
+            <li>Number: <strong>0676266814</strong></li>
+            <li>Amount: TZS ${fmt(b.monthly_amount)} (or more if adding vehicle slots)</li>
+            <li>Write your <strong>company name</strong> in the reference / message</li>
+            <li>Call or WhatsApp <strong>0676 266 814</strong> with the M-Pesa/Tigo SMS — we activate your account</li>
+          </ol>
+          <a href="https://wa.me/255676266814?text=${encodeURIComponent('Habari, nimetuma malipo ya MlimaniFleet TZS ' + (b.monthly_amount||0) + '. Kampuni: ' + (b.company?.name||''))}"
+             target="_blank" rel="noopener"
+             class="inline-flex items-center gap-2 mt-1 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
+            WhatsApp baada ya kulipa
+          </a>
+        </div>
+
+        <div class="space-y-3 max-w-md opacity-90">
+          <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Optional: in-app gateway (when enabled)</div>
           <input id="pay-phone" type="tel" placeholder="07XXXXXXXX or 2557..." value="${b.company?.phone || ''}"
             class="w-full px-3 py-2.5 border rounded-lg text-sm">
           <select id="pay-gateway" class="w-full px-3 py-2.5 border rounded-lg text-sm">
+            <option value="manual_tigopesa">I paid via TigoPesa 0676 266 814</option>
             <option value="selcom">Selcom (M-Pesa, Tigo, Airtel, Halo)</option>
             <option value="pawapay">PawaPay</option>
           </select>
           <select id="pay-provider" class="w-full px-3 py-2.5 border rounded-lg text-sm">
             ${b.providers.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
           </select>
-          <button onclick="payNow()" class="w-full bg-brand-600 hover:bg-brand-700 text-white font-medium py-2.5 rounded-lg">
-            Pay TZS ${fmt(b.monthly_amount)} now
+          <button onclick="payNow()" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-2.5 rounded-lg">
+            Record payment / Pay TZS ${fmt(b.monthly_amount)}
           </button>
-          <p class="text-xs text-slate-500">DEMO mode: payment auto-succeeds and activates 30 days.</p>
+          <p class="text-xs text-slate-500">After TigoPesa, notify us on WhatsApp 0676 266 814. Owner will Mark paid and unlock slots.</p>
         </div>
       </div>
 

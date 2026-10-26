@@ -337,7 +337,7 @@ async function handleApi(req, res, pathname) {
       phone: phone || '',
       email: email.includes('@phone.mlimanifleet') ? '' : email,
       subscription_status: 'trial',
-      vehicle_limit: Math.min(100, Math.max(1, Number(body.planned_vehicles) || Number(body.vehicle_slots) || 1)),
+      vehicle_limit: Math.min(100, Math.max(1, Number(body.planned_vehicles) || Number(body.vehicle_slots) || 5)),
       current_vehicles: 0,
       paid_vehicle_slots: 0, // after payment, slots they have paid for; during trial limit is planned
       next_billing_date: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
@@ -874,20 +874,30 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
     if (!auth || !auth.company_id) return send(res, 400, { error: 'No company' });
     const company = read('companies').find(c => c.id === auth.company_id);
     const vehicles = read('vehicles').filter(v => v.company_id === auth.company_id);
-    const limit = Number(company?.vehicle_limit) || 0;
+    const paidLimit = Number(company?.vehicle_limit) || 0;
+    const isTrial = company && (company.subscription_status === 'trial');
+    // Trial: allow at least 10 vehicles (or their planned amount if higher) without payment
+    const TRIAL_FREE_SLOTS = 10;
+    const limit = isTrial
+      ? Math.max(paidLimit, TRIAL_FREE_SLOTS)
+      : paidLimit;
     if (!company || vehicles.length >= limit) {
       const need = vehicles.length + 1;
-      const extra = Math.max(1, need - limit);
+      const extra = Math.max(1, need - (isTrial ? TRIAL_FREE_SLOTS : paidLimit));
       const { amount: unitAmount } = priceForCount(1);
       const rate = unitAmount || 10000;
+      const msg = isTrial
+        ? `Trial allows up to ${limit} vehicles (${vehicles.length}/${limit}). Contact support or wait for paid plan to add more.`
+        : `Vehicle limit reached (${vehicles.length}/${limit}). Pay for more slots (TigoPesa 0676 266 814) or use Buy more slots.`;
       return send(res, 402, {
-        error: `Vehicle limit reached (${vehicles.length}/${limit}). Pay for more vehicle slots to add another unit.`,
+        error: msg,
         code: 'VEHICLE_LIMIT',
         current_vehicles: vehicles.length,
         vehicle_limit: limit,
         extra_slots_needed: extra,
         price_per_vehicle_tzs: rate,
-        upgrade_amount_tzs: extra * rate
+        upgrade_amount_tzs: extra * rate,
+        is_trial: !!isTrial
       });
     }
     const { plate, type, make, model, year, status } = body;

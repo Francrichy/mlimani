@@ -98,10 +98,7 @@ function listCompanyUsers(auth) {
 
 function canManageTeam(auth) {
   if (!auth || !auth.company_id) return false;
-  if (auth.role === 'fleet_manager' || auth.role === 'company_admin') return true;
-  const users = read('users') || [];
-  const me = users.find(u => u.id === auth.id);
-  return !!(me && me.active !== false && me.permissions && me.permissions.team);
+  return auth.role === 'fleet_manager' || auth.role === 'company_admin';
 }
 
 function normalizePermissions(role, supplied) {
@@ -126,6 +123,9 @@ function createCompanyUser(auth, body) {
   const role = body.role || 'viewer';
   if (!ROLE_PRESETS[role] || role === 'platform_admin' || role === 'fleet_manager') throw new Error('Invalid company role');
 
+  if (role === 'company_admin' && auth.role !== 'fleet_manager') {
+    throw new Error('Only the company owner can appoint a Company Admin');
+  }
   const permissions = normalizePermissions(role, body.permissions);
 
   const user = {
@@ -165,6 +165,12 @@ function updateCompanyUser(auth, id, body) {
   if (body.phone != null) users[idx].phone = body.phone;
   if (body.role != null) {
     if (!ROLE_PRESETS[body.role] || body.role === 'fleet_manager') throw new Error('Invalid company role');
+    if (body.role === 'company_admin' && auth.role !== 'fleet_manager') {
+      throw new Error('Only the company owner can appoint a Company Admin');
+    }
+    if (users[idx].role === 'company_admin' && auth.role !== 'fleet_manager') {
+      throw new Error('Only the company owner can manage a Company Admin');
+    }
     users[idx].role = body.role;
     users[idx].permissions = normalizePermissions(body.role, body.permissions || ROLE_PRESETS[body.role].permissions);
   } else if (body.permissions) {

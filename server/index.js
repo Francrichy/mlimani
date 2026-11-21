@@ -252,12 +252,6 @@ function seedIfEmpty() {
     active: true,
     created_at: now()
   }]);
-  write('companies', []);
-  write('vehicles', []);
-  write('drivers', []);
-  write('subscriptions', []);
-  write('payments', []);
-  write('pricing_tiers', []);
   console.log('Platform owner account initialized from secure environment settings.');
 }
 
@@ -1387,7 +1381,9 @@ const server = http.createServer(async (req, res) => {
     const dbInfo = await initDb();
     console.log('Storage mode:', dbInfo.mode);
   } catch (e) {
-    console.warn('DB init error', e.message);
+    console.error('Database initialization failed; server will not start:', e.message);
+    process.exit(1);
+    return;
   }
   seedIfEmpty();
   try {

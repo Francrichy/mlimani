@@ -8,6 +8,12 @@ function companyFilter(list, auth) {
   return list.filter(x => x.company_id === auth.company_id);
 }
 
+function assertCompanyReference(collection, id, companyId, label) {
+  if (!id) return;
+  const found = (read(collection) || []).some(item => item.id === id && item.company_id === companyId);
+  if (!found) throw new Error(`${label} does not belong to this company`);
+}
+
 // ---------- TRIPS ----------
 function listTrips(auth) {
   return companyFilter(read('trips') || [], auth);
@@ -15,6 +21,8 @@ function listTrips(auth) {
 
 function createTrip(auth, body) {
   if (!auth.company_id) throw new Error('No company');
+  assertCompanyReference('vehicles', body.vehicle_id, auth.company_id, 'Vehicle');
+  assertCompanyReference('drivers', body.driver_id, auth.company_id, 'Driver');
   const companies = read('companies') || [];
   const company = companies.find(c => c.id === auth.company_id) || {};
   const defaultRate = Number(company.usd_tzs_rate) || 2600;
@@ -79,6 +87,8 @@ function updateTrip(auth, id, body) {
   const all = read('trips') || [];
   const idx = all.findIndex(t => t.id === id && (auth.role === 'platform_admin' || t.company_id === auth.company_id));
   if (idx < 0) return null;
+  assertCompanyReference('vehicles', body.vehicle_id, all[idx].company_id, 'Vehicle');
+  assertCompanyReference('drivers', body.driver_id, all[idx].company_id, 'Driver');
   all[idx] = { ...all[idx], ...body, id: all[idx].id, company_id: all[idx].company_id };
   write('trips', all);
   return all[idx];
@@ -91,6 +101,7 @@ function listMaintenance(auth) {
 
 function createMaintenance(auth, body) {
   if (!auth.company_id) throw new Error('No company');
+  assertCompanyReference('vehicles', body.vehicle_id, auth.company_id, 'Vehicle');
   const item = {
     id: uid(),
     company_id: auth.company_id,
@@ -115,6 +126,7 @@ function updateMaintenance(auth, id, body) {
   const all = read('maintenance') || [];
   const idx = all.findIndex(t => t.id === id && (auth.role === 'platform_admin' || t.company_id === auth.company_id));
   if (idx < 0) return null;
+  assertCompanyReference('vehicles', body.vehicle_id, all[idx].company_id, 'Vehicle');
   if (body.status === 'completed' && !all[idx].completed_at) body.completed_at = now();
   all[idx] = { ...all[idx], ...body, id: all[idx].id, company_id: all[idx].company_id };
   write('maintenance', all);
@@ -129,6 +141,7 @@ function listFuel(auth) {
 function createFuel(auth, body) {
   if (!auth.company_id) throw new Error('No company');
   if (!body.vehicle_id) throw new Error('Select a vehicle / truck');
+  assertCompanyReference('vehicles', body.vehicle_id, auth.company_id, 'Vehicle');
   const liters = Number(body.liters) || 0;
   if (liters <= 0) throw new Error('Enter litres filled');
   let pricePerLiter = Number(body.price_per_liter);
@@ -159,7 +172,7 @@ function createFuel(auth, body) {
   // bump vehicle odometer if higher
   if (log.vehicle_id && log.odometer) {
     const vehicles = read('vehicles');
-    const vi = vehicles.findIndex(v => v.id === log.vehicle_id);
+    const vi = vehicles.findIndex(v => v.id === log.vehicle_id && v.company_id === auth.company_id);
     if (vi >= 0 && log.odometer > (vehicles[vi].odometer || 0)) {
       vehicles[vi].odometer = log.odometer;
       write('vehicles', vehicles);

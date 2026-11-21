@@ -131,6 +131,9 @@ async function bootApp() {
     );
     window.currentPerms = perms;
 
+    if (isManager) document.getElementById('nav-ai-integration')?.classList.remove('hidden');
+    else document.getElementById('nav-ai-integration')?.classList.add('hidden');
+
     if (isAdmin) {
       document.getElementById('admin-nav')?.classList.remove('hidden');
       document.getElementById('nav-subscription')?.classList.add('hidden');
@@ -240,6 +243,7 @@ const titles = {
   inventory: ['Parts Warehouse', 'Store receive, issue to vehicles, stock levels'],
   finance: ['Finance & Billing', 'Revenue, invoices and expenses'],
   reports: ['Reports', 'Operational and financial insights'],
+  integrations: ['AI Integration', 'Connect AI assistants and review proposed actions'],
   team: ['Team', 'Company users and permissions'],
   billing: ['Subscription', 'Plans and mobile money payments'],
   'admin-home': ['Owner dashboard', 'Clients, revenue and platform health'],
@@ -255,6 +259,10 @@ async function showPage(page) {
     if (!['billing','settings'].includes(page)) {
       page = 'billing'; // SUBSCRIPTION_LOCKED_PAGE
     }
+  }
+  // AI integration is available only to company owners/admins linked to a company.
+  if (currentUser && !['fleet_manager','company_admin'].includes(currentUser.role) && page === 'integrations') {
+    page = 'dashboard';
   }
   // Platform admin must not see SaaS payment plans
   if (currentUser && currentUser.role === 'platform_admin' && page === 'billing') {
@@ -285,6 +293,7 @@ async function showPage(page) {
     else if (page === 'inventory') main.innerHTML = await renderInventory();
     else if (page === 'finance') main.innerHTML = await renderFinance();
     else if (page === 'reports') main.innerHTML = await renderReports();
+    else if (page === 'integrations') main.innerHTML = await renderAIIntegration();
     else if (page === 'team') main.innerHTML = await renderTeam();
     else if (page === 'billing') main.innerHTML = await renderBilling();
     else if (page === 'admin-home') main.innerHTML = await renderAdminHome();
@@ -838,6 +847,94 @@ async function adminSetStatus(companyId, status) {
     await api('/api/admin/companies/' + companyId, { method: 'PATCH', body: JSON.stringify({ subscription_status: status }) });
     showPage('admin-home');
   } catch (e) { alert(e.message); }
+}
+
+async function renderAIIntegration() {
+  const [statusResult, approvalResult] = await Promise.all([
+    api('/api/integrations/status').catch(error => ({ error: error.message })),
+    api('/api/integrations/approvals').catch(error => ({ error: error.message, approvals: [] }))
+  ]);
+  const statusOk = !statusResult.error && statusResult.mcp;
+  const approvals = approvalResult.approvals || [];
+  const endpoint = window.location.origin + '/api/mcp';
+  const rows = approvals.map(item => `
+    <tr class="border-b border-slate-100">
+      <td class="px-4 py-3 font-medium">${esc(item.operation || '')}</td>
+      <td class="px-4 py-3 text-xs text-slate-500 max-w-xs break-all">${esc(JSON.stringify(item.payload || {}))}</td>
+      <td class="px-4 py-3 text-xs">${esc(item.expires_at || '')}</td>
+      <td class="px-4 py-3 whitespace-nowrap">
+        <button onclick="reviewAIApproval('${esc(item.id)}','approve')" class="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold">Approve</button>
+        <button onclick="reviewAIApproval('${esc(item.id)}','reject')" class="border border-red-200 text-red-700 px-3 py-1.5 rounded-lg text-xs font-semibold ml-1">Reject</button>
+      </td>
+    </tr>`).join('');
+  return `
+  <div class="page-enter space-y-6">
+    <div class="bg-white rounded-xl border border-slate-200 p-5 flex flex-wrap items-center justify-between gap-4">
+      <div>
+        <div class="text-sm text-slate-500">Mlimani AI connector</div>
+        <h2 class="text-xl font-bold mt-1">Connect AI tools to your fleet data</h2>
+        <p class="text-sm text-slate-500 mt-1">Read company data and prepare actions for owner approval.</p>
+      </div>
+      <span class="px-3 py-1.5 rounded-full text-xs font-semibold ${statusOk ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}">${statusOk ? 'Connector available' : 'Status needs checking'}</span>
+    </div>
+    ${statusResult.error ? `<div class="bg-amber-50 text-amber-800 rounded-xl p-4 text-sm">${esc(statusResult.error)}</div>` : ''}
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="bg-white rounded-xl border p-5 space-y-3">
+        <div class="font-semibold">MCP connection address</div>
+        <p class="text-xs text-slate-500">Use this address in an AI application that supports MCP.</p>
+        <div class="bg-slate-50 border rounded-lg p-3 text-sm break-all" id="ai-mcp-endpoint">${esc(endpoint)}</div>
+        <button onclick="copyAIEndpoint()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">Copy connection address</button>
+      </div>
+      <div class="bg-white rounded-xl border p-5 space-y-3">
+        <div class="font-semibold">Security and permissions</div>
+        <ul class="text-sm text-slate-600 list-disc pl-5 space-y-2">
+          <li>Only data belonging to your signed-in company is available.</li>
+          <li>AI tools use a signed-in Mlimani user access token.</li>
+          <li>Creating expenses, trips or invoices requires your approval below.</li>
+          <li>Never share your password or access token with anyone.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl border p-5 space-y-3">
+      <div class="font-semibold">Available AI capabilities</div>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 text-sm">
+        ${['Vehicles','Drivers','Trips','Maintenance','Fuel logs','Parts inventory','Expenses','Invoices','Supplier loans','Finance summary','Fleet dashboard','Request approval for new records'].map(x => `<div class="bg-slate-50 rounded-lg px-3 py-2"><i data-lucide="check-circle-2" class="w-4 h-4 inline text-emerald-600 mr-1"></i>${x}</div>`).join('')}
+      </div>
+      <p class="text-xs text-slate-500">MCP endpoint: <code>/api/mcp</code> · REST status: <code>/api/integrations/status</code></p>
+    </div>
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <div class="px-5 py-4 border-b flex items-center justify-between gap-3">
+        <div><div class="font-semibold">AI action approvals</div><p class="text-xs text-slate-500 mt-1">Review proposed expenses, trips and invoices before they are saved.</p></div>
+        <button onclick="showPage('integrations')" class="border px-3 py-2 rounded-lg text-xs font-semibold">Refresh</button>
+      </div>
+      ${approvalResult.error ? `<div class="p-5 text-sm text-slate-500">${esc(approvalResult.error)}</div>` : approvals.length ? `
+      <div class="overflow-x-auto"><table class="w-full text-left text-sm min-w-[650px]">
+        <thead class="bg-slate-50 text-xs text-slate-500"><tr><th class="px-4 py-3">Action</th><th class="px-4 py-3">Proposed details</th><th class="px-4 py-3">Expires</th><th class="px-4 py-3">Decision</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>` : '<div class="p-8 text-center text-sm text-slate-400">No pending AI actions. New proposals will appear here for your review.</div>'}
+    </div>
+    <div class="text-xs text-slate-500">For setup instructions, see the AI Integration Guide in the Mlimani project documentation.</div>
+  </div>`;
+}
+
+async function reviewAIApproval(id, decision) {
+  if (!['approve','reject'].includes(decision)) return;
+  const message = decision === 'approve'
+    ? 'Approve this AI proposal? The proposed record will be created in your company.'
+    : 'Reject this AI proposal? No record will be created.';
+  if (!confirm(message)) return;
+  try {
+    await api('/api/integrations/approvals/' + encodeURIComponent(id) + '/' + decision, { method: 'POST', body: '{}' });
+    alert(decision === 'approve' ? 'AI proposal approved.' : 'AI proposal rejected.');
+    showPage('integrations');
+  } catch (error) { alert(error.message); }
+}
+
+function copyAIEndpoint() {
+  const value = document.getElementById('ai-mcp-endpoint')?.textContent || '';
+  if (!value) return;
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(value).then(() => alert('Connection address copied.')).catch(() => alert(value));
+  else alert(value);
 }
 
 async function renderSettings() {

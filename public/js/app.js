@@ -516,12 +516,13 @@ async function saveDriver() {
 async function renderBilling() {
   const b = await api('/api/billing/summary');
   const locked = window.subscriptionState && window.subscriptionState.locked;
+  const pending = (b.payments || []).find(p => p.status === 'submitted');
   const lockNote = locked ? `<div class="bg-red-50 border border-red-200 text-red-800 rounded-xl p-4 text-sm mb-4">
     <strong>Your access is limited until payment is confirmed.</strong><br>
-    ${window.subscriptionState.reason || ''}
-    <br><span class="text-xs mt-1 block">Pay with mobile money below, or send M-Pesa to MlimaniFleet and ask them to mark you paid.</span>
+    ${esc(window.subscriptionState.reason || '')}
   </div>` : '';
   const tiers = (await api('/api/pricing')).tiers;
+  const instructions = b.payment_instructions || {};
   return `
   <div class="page-enter space-y-6">
     ${lockNote}
@@ -529,62 +530,59 @@ async function renderBilling() {
       <div class="lg:col-span-2 bg-white rounded-xl border p-6">
         <h3 class="font-semibold text-lg">Current subscription</h3>
         <div class="mt-4 grid sm:grid-cols-3 gap-4">
-          <div class="p-4 bg-slate-50 rounded-xl">
-            <div class="text-xs text-slate-500">Status</div>
-            <div class="font-semibold mt-1 capitalize">${b.company?.subscription_status || '—'}</div>
-          </div>
-          <div class="p-4 bg-slate-50 rounded-xl">
-            <div class="text-xs text-slate-500">Vehicles</div>
-            <div class="font-semibold mt-1">${b.vehicle_count} / ${b.company?.vehicle_limit || '—'}</div>
-          </div>
-          <div class="p-4 bg-slate-50 rounded-xl">
-            <div class="text-xs text-slate-500">Next billing</div>
-            <div class="font-semibold mt-1">${b.company?.next_billing_date || '—'}</div>
-          </div>
+          <div class="p-4 bg-slate-50 rounded-xl"><div class="text-xs text-slate-500">Status</div><div class="font-semibold mt-1 capitalize">${esc(b.company?.subscription_status || '—')}</div></div>
+          <div class="p-4 bg-slate-50 rounded-xl"><div class="text-xs text-slate-500">Vehicles</div><div class="font-semibold mt-1">${b.vehicle_count} / ${b.company?.vehicle_limit || '—'}</div></div>
+          <div class="p-4 bg-slate-50 rounded-xl"><div class="text-xs text-slate-500">Next billing</div><div class="font-semibold mt-1">${esc(b.company?.next_billing_date || '—')}</div></div>
         </div>
         <div class="mt-6 p-5 bg-gradient-to-r from-brand-600 to-brand-800 rounded-xl text-white">
           <div class="text-brand-100 text-sm">Estimated monthly fee</div>
           <div class="text-3xl font-bold mt-1">TZS ${fmt(b.monthly_amount)}</div>
-          <div class="text-sm text-brand-200 mt-1">${b.current_tier?.name || '—'} plan · ${b.vehicle_count} vehicle(s)</div>
+          <div class="text-sm text-brand-200 mt-1">${esc(b.current_tier?.name || '—')} plan · ${b.vehicle_count} vehicle(s)</div>
         </div>
 
-        <h4 class="font-semibold mt-8 mb-3">Pay subscription</h4>
-
-        <div class="max-w-md mb-5 p-4 rounded-xl border-2 border-brand-200 bg-brand-50 space-y-2">
-          <div class="text-sm font-semibold text-brand-900">Pay direct — TigoPesa (recommended)</div>
-          <p class="text-sm text-slate-700">Send <strong>TZS ${fmt(b.monthly_amount)}</strong> to:</p>
-          <div class="text-2xl font-bold tracking-wide text-slate-900">0676 266 814</div>
-          <p class="text-xs text-slate-600">Name: MlimaniFleet · Network: <strong>TigoPesa</strong></p>
-          <ol class="text-xs text-slate-600 list-decimal ml-4 space-y-1">
-            <li>Open TigoPesa → Send money</li>
-            <li>Number: <strong>0676266814</strong></li>
-            <li>Amount: TZS ${fmt(b.monthly_amount)} (or more if adding vehicle slots)</li>
-            <li>Write your <strong>company name</strong> in the reference / message</li>
-            <li>Call or WhatsApp <strong>0676 266 814</strong> with the M-Pesa/Tigo SMS — we activate your account</li>
-          </ol>
-          <a href="https://wa.me/255676266814?text=${encodeURIComponent('Habari, nimetuma malipo ya MlimaniFleet TZS ' + (b.monthly_amount||0) + '. Kampuni: ' + (b.company?.name||''))}"
-             target="_blank" rel="noopener"
-             class="inline-flex items-center gap-2 mt-1 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
-            WhatsApp baada ya kulipa
-          </a>
+        <h4 class="font-semibold mt-8 mb-3">Pay by bank transfer or mobile money</h4>
+        ${pending ? `<div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <strong>Payment submitted — awaiting verification.</strong>
+          <div class="mt-1">Reference: ${esc(pending.transaction_reference || '—')} · TZS ${fmt(pending.amount || 0)}</div>
+          <div class="text-xs mt-1">Your subscription will be activated after the Platform Owner confirms receipt.</div>
+        </div>` : ''}
+        <div class="grid sm:grid-cols-2 gap-3 mb-5">
+          <div class="rounded-xl border p-4 bg-slate-50">
+            <div class="font-semibold text-sm">NMB Bank transfer</div>
+            <div class="text-xs text-slate-500 mt-2">Account name</div>
+            <div class="font-semibold text-sm">${esc(instructions.account_name || 'ANT LAB ECO SERVICE COMPANY LIMITED')}</div>
+            <div class="text-xs text-slate-500 mt-2">Account number</div>
+            <div class="text-xl font-bold tracking-wide">${esc(instructions.account_number || '34010004482')}</div>
+            <div class="text-xs text-slate-500 mt-1">Bank: ${esc(instructions.bank_name || 'NMB Bank')}</div>
+          </div>
+          <div class="rounded-xl border p-4 bg-slate-50">
+            <div class="font-semibold text-sm">Mixx by Yas</div>
+            <div class="text-xs text-slate-500 mt-2">Send payment to</div>
+            <div class="text-xl font-bold tracking-wide">${esc(instructions.mobile_number || '0676266814')}</div>
+            <div class="text-xs text-slate-500 mt-1">Account name: ${esc(instructions.mobile_name || 'ANT LAB ECO SERVICE COMPANY LIMITED')}</div>
+          </div>
         </div>
-
-        <div class="space-y-3 max-w-md opacity-90">
-          <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Optional: in-app gateway (when enabled)</div>
-          <input id="pay-phone" type="tel" placeholder="07XXXXXXXX or 2557..." value="${b.company?.phone || ''}"
-            class="w-full px-3 py-2.5 border rounded-lg text-sm">
-          <select id="pay-gateway" class="w-full px-3 py-2.5 border rounded-lg text-sm">
-            <option value="manual_tigopesa">I paid via TigoPesa 0676 266 814</option>
-            <option value="selcom">Selcom (M-Pesa, Tigo, Airtel, Halo)</option>
-            <option value="pawapay">PawaPay</option>
+        <div class="max-w-xl rounded-xl border p-4 space-y-3">
+          <h5 class="font-semibold">Submit your payment details</h5>
+          <p class="text-xs text-slate-500">After paying, enter the transaction reference from your bank or Mixx confirmation message. Do not submit until you have actually paid.</p>
+          <label class="block text-sm font-medium">Payment method</label>
+          <select id="pay-method" class="w-full px-3 py-2.5 border rounded-lg text-sm">
+            <option value="bank_transfer">NMB Bank transfer</option>
+            <option value="mixx_yas">Mixx by Yas</option>
           </select>
-          <select id="pay-provider" class="w-full px-3 py-2.5 border rounded-lg text-sm">
-            ${b.providers.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
-          </select>
-          <button onclick="payNow()" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-medium py-2.5 rounded-lg">
-            Record payment / Pay TZS ${fmt(b.monthly_amount)}
+          <label class="block text-sm font-medium">Amount paid (TZS)</label>
+          <input id="pay-amount" type="number" min="1" step="1" value="${Number(b.monthly_amount) || 0}" class="w-full px-3 py-2.5 border rounded-lg text-sm">
+          <label class="block text-sm font-medium">Transaction / bank reference</label>
+          <input id="pay-reference" maxlength="100" placeholder="Enter reference from payment confirmation" class="w-full px-3 py-2.5 border rounded-lg text-sm">
+          <label class="block text-sm font-medium">Name used to make payment</label>
+          <input id="pay-payer-name" maxlength="120" placeholder="Payer full name" value="${esc(b.company?.name || '')}" class="w-full px-3 py-2.5 border rounded-lg text-sm">
+          <label class="block text-sm font-medium">Payer mobile number (optional)</label>
+          <input id="pay-payer-phone" type="tel" maxlength="30" placeholder="07XXXXXXXX" value="${esc(b.company?.phone || '')}" class="w-full px-3 py-2.5 border rounded-lg text-sm">
+          <label class="block text-sm font-medium">Additional note (optional)</label>
+          <textarea id="pay-notes" rows="2" maxlength="500" placeholder="Any additional payment information" class="w-full px-3 py-2.5 border rounded-lg text-sm"></textarea>
+          <button onclick="payNow()" ${pending ? 'disabled' : ''} class="w-full ${pending ? 'bg-slate-300 cursor-not-allowed' : 'bg-brand-600 hover:bg-brand-700'} text-white font-medium py-2.5 rounded-lg">
+            ${pending ? 'Payment awaiting verification' : 'Submit payment for verification'}
           </button>
-          <p class="text-xs text-slate-500">After TigoPesa, notify us on WhatsApp 0676 266 814. Owner will Mark paid and unlock slots.</p>
         </div>
       </div>
 
@@ -597,10 +595,7 @@ async function renderBilling() {
               const mode = t.pricing_mode || (t.price_per_vehicle ? 'per_vehicle' : 'flat');
               const priceLabel = mode === 'per_vehicle' ? `TZS ${fmt(rate)} / vehicle` : mode === 'base_plus' ? `TZS ${fmt(t.price_tzs||0)} + ${fmt(rate)}/extra` : `TZS ${fmt(t.price_tzs||0)}`;
               return `<div class="p-3 rounded-lg border ${b.current_tier?.id===t.id?'border-brand-500 bg-brand-50':'border-slate-100'}">
-                <div class="flex justify-between items-center">
-                  <div class="font-medium">${t.name}</div>
-                  <div class="font-bold text-brand-700 text-right text-sm">${priceLabel}</div>
-                </div>
+                <div class="flex justify-between items-center"><div class="font-medium">${esc(t.name)}</div><div class="font-bold text-brand-700 text-right text-sm">${priceLabel}</div></div>
                 <div class="text-xs text-slate-500 mt-1">${t.min_vehicles}–${t.max_vehicles === 9999 ? '∞' : t.max_vehicles} vehicles / month</div>
               </div>`;
             }).join('')}
@@ -609,12 +604,9 @@ async function renderBilling() {
         <div class="bg-white rounded-xl border p-5">
           <h4 class="font-semibold mb-3">Recent payments</h4>
           ${b.payments.length ? b.payments.map(p => `
-            <div class="flex justify-between text-sm py-2 border-b border-slate-50 last:border-0">
-              <div>
-                <div class="font-medium">TZS ${fmt(p.amount)}</div>
-                <div class="text-xs text-slate-500">${p.created_at?.slice(0,10)} · ${p.gateway}</div>
-              </div>
-              <span class="text-xs px-2 py-0.5 rounded h-fit ${p.status==='completed'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}">${p.status}</span>
+            <div class="flex justify-between gap-2 text-sm py-2 border-b border-slate-50 last:border-0">
+              <div><div class="font-medium">TZS ${fmt(p.amount)}</div><div class="text-xs text-slate-500">${esc(p.created_at?.slice(0,10) || '')} · ${esc(p.provider || p.gateway || '')}</div><div class="text-xs text-slate-500">${esc(p.transaction_reference || '')}</div></div>
+              <span class="text-xs px-2 py-0.5 rounded h-fit ${p.status==='completed'?'bg-emerald-50 text-emerald-700':p.status==='rejected'?'bg-red-50 text-red-700':'bg-amber-50 text-amber-700'}">${esc(p.status)}</span>
             </div>`).join('') : '<p class="text-sm text-slate-400">No payments yet</p>'}
         </div>
       </div>
@@ -623,18 +615,22 @@ async function renderBilling() {
 }
 
 async function payNow() {
-  const phone = document.getElementById('pay-phone').value;
-  if (!phone) return alert('Enter phone number');
+  const payment_method = document.getElementById('pay-method')?.value;
+  const amount = Number(document.getElementById('pay-amount')?.value);
+  const transaction_reference = document.getElementById('pay-reference')?.value?.trim();
+  const payer_name = document.getElementById('pay-payer-name')?.value?.trim();
+  const payer_phone = document.getElementById('pay-payer-phone')?.value?.trim();
+  const notes = document.getElementById('pay-notes')?.value?.trim();
+  if (!amount || amount <= 0) return alert('Enter the amount you actually paid');
+  if (!transaction_reference || transaction_reference.length < 4) return alert('Enter the transaction or bank reference');
+  if (!payer_name) return alert('Enter the name used to make the payment');
+  if (!confirm('Confirm that you have already made this payment and the details are correct?')) return;
   try {
     const res = await api('/api/billing/pay', {
       method: 'POST',
-      body: JSON.stringify({
-        phone,
-        gateway: document.getElementById('pay-gateway').value,
-        provider: document.getElementById('pay-provider').value
-      })
+      body: JSON.stringify({ payment_method, amount, transaction_reference, payer_name, payer_phone, notes })
     });
-    alert(res.message);
+    alert(res.message || 'Payment submitted for verification');
     showPage('billing');
   } catch (e) { alert(e.message); }
 }
@@ -655,7 +651,7 @@ async function renderAdminHome() {
       <p class="text-slate-300 text-sm mt-2">Clients, subscriptions, revenue and overdue billing — at a glance.</p>
       <div class="flex flex-wrap gap-2 mt-4">
         <button onclick="showPage('admin-companies')" class="bg-white/10 hover:bg-white/20 text-sm px-3 py-1.5 rounded-lg">All clients</button>
-        <button onclick="showPage('admin-payments')" class="bg-white/10 hover:bg-white/20 text-sm px-3 py-1.5 rounded-lg">Payments</button>
+        <button onclick="showPage('admin-payments')" class="bg-white/10 hover:bg-white/20 text-sm px-3 py-1.5 rounded-lg">Payments ${s.pending_payment_submissions ? '(' + s.pending_payment_submissions + ' to review)' : ''}</button>
         <button onclick="showPage('admin-pricing')" class="bg-white/10 hover:bg-white/20 text-sm px-3 py-1.5 rounded-lg">Pricing</button>
         <button onclick="showPage('settings')" class="bg-white/10 hover:bg-white/20 text-sm px-3 py-1.5 rounded-lg">Settings</button>
       </div>
@@ -746,30 +742,73 @@ async function renderAdminHome() {
 async function renderAdminPayments() {
   const d = await api('/api/admin/overview');
   const pays = d.recent_payments || [];
+  const submissions = d.payment_submissions || [];
   const s = d.stats || {};
   return `
   <div class="page-enter space-y-5">
     <div class="grid sm:grid-cols-3 gap-4">
-      <div class="bg-white border rounded-xl p-4"><div class="text-xs text-slate-500">All time</div><div class="text-xl font-bold text-emerald-700">TZS ${fmt(s.revenue_all_tzs||0)}</div></div>
+      <div class="bg-white border rounded-xl p-4"><div class="text-xs text-slate-500">All time received</div><div class="text-xl font-bold text-emerald-700">TZS ${fmt(s.revenue_all_tzs||0)}</div></div>
       <div class="bg-white border rounded-xl p-4"><div class="text-xs text-slate-500">This month</div><div class="text-xl font-bold">TZS ${fmt(s.revenue_month_tzs||0)}</div></div>
-      <div class="bg-white border rounded-xl p-4"><div class="text-xs text-slate-500">This week</div><div class="text-xl font-bold">TZS ${fmt(s.revenue_week_tzs||0)}</div></div>
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-4"><div class="text-xs text-amber-800">Awaiting your verification</div><div class="text-2xl font-bold text-amber-900">${s.pending_payment_submissions||0}</div></div>
     </div>
     <div class="bg-white rounded-xl border overflow-hidden">
-      <table class="w-full text-sm">
-        <thead><tr class="text-left text-xs text-slate-500 bg-slate-50 border-b"><th class="px-5 py-3">Date</th><th class="py-3">Client</th><th class="py-3">Phone</th><th class="py-3">Amount</th><th class="py-3">Gateway</th><th class="py-3">Status</th></tr></thead>
+      <div class="px-5 py-4 border-b"><h3 class="font-semibold">New payment submissions</h3><p class="text-xs text-slate-500 mt-1">Verify the payment in your NMB or Mixx account before approving it. Submission alone does not activate the customer's subscription.</p></div>
+      ${submissions.length ? submissions.map(p => `
+        <div class="p-5 border-b last:border-0">
+          <div class="flex flex-wrap justify-between gap-3">
+            <div>
+              <div class="font-semibold">${esc(p.company_name || '—')} · TZS ${fmt(p.amount || 0)}</div>
+              <div class="text-sm mt-1">${esc(p.provider || p.payment_method || 'Manual payment')} · Reference: <strong>${esc(p.transaction_reference || '—')}</strong></div>
+              <div class="text-xs text-slate-500 mt-1">Payer: ${esc(p.payer_name || '—')} · Phone: ${esc(p.payer_phone || p.phone || '—')}</div>
+              <div class="text-xs text-slate-500">Submitted: ${esc((p.created_at || '').slice(0,19).replace('T',' '))} · WhatsApp alert: ${esc(p.whatsapp_notification || 'not configured')}</div>
+              ${p.notes ? `<div class="text-xs text-slate-600 mt-1">Note: ${esc(p.notes)}</div>` : ''}
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="adminApprovePayment('${p.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg">Approve & activate</button>
+              <button onclick="adminRejectPayment('${p.id}')" class="bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold px-3 py-2 rounded-lg">Reject</button>
+            </div>
+          </div>
+        </div>`).join('') : '<div class="px-5 py-10 text-center text-slate-400">No new payment submissions awaiting verification.</div>'}
+    </div>
+    <div class="bg-white rounded-xl border overflow-hidden">
+      <div class="px-5 py-3 border-b font-semibold text-sm">Payment history</div>
+      <div class="overflow-x-auto"><table class="w-full text-sm">
+        <thead><tr class="text-left text-xs text-slate-500 bg-slate-50 border-b"><th class="px-5 py-3">Date</th><th class="py-3">Client</th><th class="py-3">Payer / reference</th><th class="py-3">Amount</th><th class="py-3">Method</th><th class="py-3">Status</th></tr></thead>
         <tbody class="divide-y">
           ${pays.map(p => `<tr>
-            <td class="px-5 py-3 text-xs text-slate-500">${(p.completed_at||p.created_at||'').slice(0,19).replace('T',' ')}</td>
+            <td class="px-5 py-3 text-xs text-slate-500">${esc((p.completed_at||p.created_at||'').slice(0,19).replace('T',' '))}</td>
             <td class="py-3 font-medium">${esc(p.company_name)}</td>
-            <td class="py-3 text-xs">${p.phone||'—'}</td>
+            <td class="py-3 text-xs">${esc(p.payer_name || p.phone || '—')}<div class="text-slate-500">${esc(p.transaction_reference || '')}</div></td>
             <td class="py-3 font-semibold">TZS ${fmt(p.amount||0)}</td>
-            <td class="py-3 text-xs">${p.gateway||'—'} ${p.provider||''}</td>
-            <td class="py-3"><span class="text-xs px-2 py-0.5 rounded ${p.status==='completed'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}">${p.status}</span></td>
+            <td class="py-3 text-xs">${esc(p.provider || p.gateway || '—')}</td>
+            <td class="py-3"><span class="text-xs px-2 py-0.5 rounded ${p.status==='completed'?'bg-emerald-50 text-emerald-700':p.status==='rejected'?'bg-red-50 text-red-700':'bg-amber-50 text-amber-700'}">${esc(p.status)}</span></td>
           </tr>`).join('') || '<tr><td colspan="6" class="px-5 py-10 text-center text-slate-400">No payments recorded yet</td></tr>'}
         </tbody>
-      </table>
+      </table></div>
     </div>
   </div>`;
+}
+
+async function adminApprovePayment(paymentId) {
+  if (!confirm('Have you checked your NMB or Mixx account and confirmed this payment was received? Approving will activate the customer subscription for 30 days.')) return;
+  try {
+    const r = await api('/api/admin/payments/' + encodeURIComponent(paymentId) + '/approve', {
+      method: 'POST', body: JSON.stringify({ days: 30 })
+    });
+    alert(r.message || 'Payment approved');
+    showPage('admin-payments');
+  } catch (e) { alert(e.message); }
+}
+async function adminRejectPayment(paymentId) {
+  const note = prompt('Reason for rejecting this payment (optional):', 'Payment not verified');
+  if (note === null) return;
+  try {
+    const r = await api('/api/admin/payments/' + encodeURIComponent(paymentId) + '/reject', {
+      method: 'POST', body: JSON.stringify({ note })
+    });
+    alert(r.message || 'Payment rejected');
+    showPage('admin-payments');
+  } catch (e) { alert(e.message); }
 }
 
 

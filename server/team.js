@@ -4,6 +4,7 @@
  */
 const { read, write, uid, now } = require('./db');
 const { hashPassword } = require('./auth');
+const crypto = require('crypto');
 
 const ROLE_PRESETS = {
   fleet_manager: {
@@ -34,6 +35,41 @@ const ROLE_PRESETS = {
       finance: false, gps: false, inventory: true, reports: false, billing: false, team: false
     }
   },
+  company_admin: {
+    label: 'Company Admin',
+    permissions: {
+      vehicles: true, drivers: true, trips: true, maintenance: true, fuel: true,
+      finance: true, gps: true, inventory: true, reports: true, billing: false, team: true
+    }
+  },
+  operations: {
+    label: 'Operations',
+    permissions: {
+      vehicles: true, drivers: true, trips: true, maintenance: true, fuel: true,
+      finance: false, gps: true, inventory: false, reports: true, billing: false, team: false
+    }
+  },
+  warehouse_officer: {
+    label: 'Warehouse Officer',
+    permissions: {
+      vehicles: false, drivers: false, trips: false, maintenance: false, fuel: false,
+      finance: false, gps: false, inventory: true, reports: false, billing: false, team: false
+    }
+  },
+  driver: {
+    label: 'Driver',
+    permissions: {
+      vehicles: false, drivers: false, trips: true, maintenance: false, fuel: false,
+      finance: false, gps: true, inventory: false, reports: false, billing: false, team: false
+    }
+  },
+  auditor: {
+    label: 'Auditor',
+    permissions: {
+      vehicles: true, drivers: true, trips: true, maintenance: true, fuel: true,
+      finance: true, gps: true, inventory: true, reports: true, billing: false, team: false
+    }
+  },
   viewer: {
     label: 'Viewer',
     permissions: {
@@ -61,11 +97,18 @@ function listCompanyUsers(auth) {
 }
 
 function canManageTeam(auth) {
-  if (auth.role === 'platform_admin') return true;
-  if (auth.role === 'fleet_manager') return true;
+  if (!auth || !auth.company_id) return false;
+  if (auth.role === 'fleet_manager' || auth.role === 'company_admin') return true;
   const users = read('users') || [];
   const me = users.find(u => u.id === auth.id);
-  return !!(me && me.permissions && me.permissions.team);
+  return !!(me && me.active !== false && me.permissions && me.permissions.team);
+}
+
+function normalizePermissions(role, supplied) {
+  const allowed = ['vehicles','drivers','trips','maintenance','fuel','finance','gps','inventory','reports','billing','team'];
+  const preset = ROLE_PRESETS[role]?.permissions || ROLE_PRESETS.viewer.permissions;
+  if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) return { ...preset };
+  return Object.fromEntries(allowed.map(key => [key, supplied[key] === true]));
 }
 
 function createCompanyUser(auth, body) {
@@ -73,16 +116,17 @@ function createCompanyUser(auth, body) {
   if (!canManageTeam(auth)) throw new Error('No permission to manage team');
 
   const email = (body.email || '').toLowerCase().trim();
-  const password = body.password || 'ChangeMe1';
   if (!email) throw new Error('Email required');
+  const password = body.password || crypto.randomBytes(9).toString('base64url');
+  if (String(password).length < 10) throw new Error('Password must be at least 10 characters');
 
   const users = read('users') || [];
   if (users.find(u => u.email === email)) throw new Error('Email already registered');
 
   const role = body.role || 'viewer';
-  if (role === 'platform_admin') throw new Error('Invalid role');
+  if (!ROLE_PRESETS[role] || role === 'platform_admin' || role === 'fleet_manager') throw new Error('Invalid company role');
 
-  const permissions = body.permissions || ROLE_PRESETS[role]?.permissions || ROLE_PRESETS.viewer.permissions;
+  const permissions = normalizePermissions(role, body.permissions);
 
   const user = {
     id: uid(),
@@ -119,8 +163,13 @@ function updateCompanyUser(auth, id, body) {
   // cannot demote yourself removing team access accidentally handled by UI
   if (body.name != null) users[idx].name = body.name;
   if (body.phone != null) users[idx].phone = body.phone;
-  if (body.role != null && body.role !== 'platform_admin') users[idx].role = body.role;
-  if (body.permissions) users[idx].permissions = body.permissions;
+  if (body.role != null) {
+    if (!ROLE_PRESETS[body.role] || body.role === 'fleet_manager') throw new Error('Invalid company role');
+    users[idx].role = body.role;
+    users[idx].permissions = normalizePermissions(body.role, body.permissions || ROLE_PRESETS[body.role].permissions);
+  } else if (body.permissions) {
+    users[idx].permissions = normalizePermissions(users[idx].role, body.permissions);
+  }
   if (body.active != null) users[idx].active = !!body.active;
   if (body.password) users[idx].password = hashPassword(body.password);
   write('users', users);

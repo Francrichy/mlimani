@@ -1379,6 +1379,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 (async function boot() {
+  if (String(process.env.JWT_SECRET || '').length < 32) {
+    console.error('Startup blocked: configure JWT_SECRET with at least 32 random characters.');
+    process.exit(1);
+    return;
+  }
   try {
     const dbInfo = await initDb();
     console.log('Storage mode:', dbInfo.mode);

@@ -1,0 +1,24 @@
+name: Validate Mlimani Fleet
+on:
+  push:
+    branches:
+      - feature/mlimani-saas-security-and-roles
+  pull_request:
+    branches:
+      - main
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm install
+      - name: Check server JavaScript syntax
+        run: find server -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Run authentication tests
+        run: npm test
+      - name: Run project build command
+        run: npm run build

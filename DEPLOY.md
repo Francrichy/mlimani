@@ -77,6 +77,7 @@ docker compose up -d --build
 | `APP_URL` | Public URL for payment redirects/webhooks |
 | `PAYMENT_DEMO` | `true` = simulate payments |
 | `DATABASE_URL` | `postgres://user:pass@host:5432/db` |
+| `GPS_WEBHOOK_SECRET` | Required secret header for GPS device webhook requests |
 | `SELCOM_VENDOR_ID` / `SELCOM_API_KEY` / `SELCOM_API_SECRET` | Selcom live |
 | `PAWAPAY_API_TOKEN` / `PAWAPAY_ENV` | PawaPay (`sandbox` or `live`) |
 | `NOTIFY_DEMO` | `true` = log SMS/WA only |

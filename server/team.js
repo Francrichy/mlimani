@@ -70,6 +70,13 @@ const ROLE_PRESETS = {
       finance: true, gps: true, inventory: true, reports: true, billing: false, team: false
     }
   },
+  custom: {
+    label: 'Custom Permissions',
+    permissions: {
+      vehicles: false, drivers: false, trips: false, maintenance: false, fuel: false,
+      finance: false, gps: false, inventory: false, reports: false, billing: false, team: false
+    }
+  },
   viewer: {
     label: 'Viewer',
     permissions: {

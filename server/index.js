@@ -195,8 +195,17 @@ function enforceModulePermission(req, res, pathname) {
   }
   const user = (read('users') || []).find(u => u.id === auth.id);
   const permissions = user?.permissions || team.ROLE_PRESETS[user?.role]?.permissions || {};
-  if (user?.role === 'fleet_manager' || permissions[permission] === true) return true;
-  send(res, 403, { error: 'You do not have permission to access this module', code: 'MODULE_PERMISSION_DENIED', permission });
+  if (user?.role === 'fleet_manager') return true;
+  if (permissions[permission] !== true) {
+    send(res, 403, { error: 'You do not have permission to access this module', code: 'MODULE_PERMISSION_DENIED', permission });
+    return false;
+  }
+  // Auditors and viewers may inspect records but must not create, change or delete them.
+  if (['auditor', 'viewer'].includes(user?.role) && !['GET', 'HEAD'].includes(req.method)) {
+    send(res, 403, { error: 'This role has read-only access', code: 'READ_ONLY_ROLE' });
+    return false;
+  }
+  return true;
   return false;
 }
 
@@ -331,6 +340,7 @@ async function handleApi(req, res, pathname) {
     let email = (body.email || '').trim().toLowerCase();
     let phone = normalizePhone(body.phone || '');
     if (!password || !company_name) return send(res, 400, { error: 'Company name and password required' });
+    if (String(password).length < 10) return send(res, 400, { error: 'Password must be at least 10 characters' });
     if (!phone && !email) return send(res, 400, { error: 'Provide mobile number or email' });
     if (phone && !/^255[67]\d{8}$/.test(phone)) {
       return send(res, 400, { error: 'Enter a valid Tanzania mobile (e.g. 07XXXXXXXX)' });
@@ -1412,8 +1422,7 @@ const server = http.createServer(async (req, res) => {
     console.log(`  ║     http://localhost:${PORT}                 ║`);
     console.log('  ╚══════════════════════════════════════════╝');
     console.log('');
-    console.log('  Platform admin: admin@mlimanifleet.tz (change password after launch)');
-    if (process.env.SEED_DEMO !== 'false') console.log('  Demo fleet: demo@mlimanifleet.tz / demo123');
+    console.log('  Platform owner account is created from private bootstrap settings when required.');
     console.log(`  Payment mode: ${DEMO ? 'DEMO (auto-success)' : 'LIVE'}`);
     console.log('');
   });

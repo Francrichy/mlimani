@@ -898,21 +898,20 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
     payments.push(payment);
     write('payments', payments);
 
-    // WhatsApp Cloud API is optional. In-app owner notifications work without it.
-    if (process.env.NOTIFY_DEMO === 'false' && process.env.WA_ACCESS_TOKEN && process.env.WA_PHONE_NUMBER_ID) {
-      const message = [
-        'Mlimani Fleet: New payment submitted for verification.',
-        'Company: ' + company.name,
-        'Amount: TZS ' + amount.toLocaleString('en-TZ'),
-        'Method: ' + (methodName === 'bank_transfer' ? 'NMB Bank' : 'Mixx by Yas'),
-        'Reference: ' + reference,
-        'Payer: ' + payerName,
-        'Review it in the Platform Owner dashboard.'
-      ].join('\n');
+    // Business-initiated WhatsApp alerts require a configured approved template.
+    if (process.env.NOTIFY_DEMO === 'false' && process.env.WA_ACCESS_TOKEN && process.env.WA_PHONE_NUMBER_ID && process.env.WA_TEMPLATE_NAME) {
       try {
-        const sent = await notify.sendWhatsApp({
+        const sent = await notify.sendWhatsAppTemplate({
           to: process.env.PAYMENT_NOTIFY_WHATSAPP || '255676266814',
-          message
+          templateName: process.env.WA_TEMPLATE_NAME,
+          language: process.env.WA_TEMPLATE_LANGUAGE || 'en',
+          parameters: [
+            company.name,
+            'TZS ' + amount.toLocaleString('en-TZ'),
+            methodName === 'bank_transfer' ? 'NMB Bank' : 'Mixx by Yas',
+            reference,
+            payerName
+          ]
         });
         payment.whatsapp_notification = sent.success && !sent.demo ? 'sent' : 'not_configured';
       } catch (e) {

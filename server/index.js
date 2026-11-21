@@ -21,6 +21,7 @@ const team = require('./team');
 const inv = require('./inventory');
 const exp = require('./expenses');
 const mrules = require('./maint_rules');
+const integration = require('./integrations');
 
 const PORT = process.env.PORT || 3847;
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -30,7 +31,7 @@ function send(res, status, data) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, MCP-Protocol-Version',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS'
   });
   res.end(JSON.stringify(data));
@@ -307,7 +308,7 @@ async function handleApi(req, res, pathname) {
   if (method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, MCP-Protocol-Version',
       'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS'
     });
     return res.end();
@@ -333,6 +334,9 @@ async function handleApi(req, res, pathname) {
       }
     }
   }
+
+  // ---- REST API + MCP AI INTEGRATION ----
+  if (await integration.handle(req, res, pathname, { getAuth, send, body })) return;
 
   // ---- AUTH ----
   if (pathname === '/api/auth/register' && method === 'POST') {

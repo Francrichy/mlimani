@@ -1307,8 +1307,8 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
 
   if (pathname === '/api/gps/webhook' && method === 'POST') {
     const secret = process.env.GPS_WEBHOOK_SECRET;
-    if (secret && req.headers['x-gps-secret'] !== secret) {
-      return send(res, 401, { error: 'Invalid webhook secret' });
+    if (!secret || req.headers['x-gps-secret'] !== secret) {
+      return send(res, 401, { error: 'Invalid or missing GPS webhook secret' });
     }
     const result = gps.ingestPosition({
       imei: body.imei || body.device_id,

@@ -121,6 +121,37 @@ async function sendWhatsApp({ to, message }) {
   return { success: res.status < 300, channel: 'whatsapp', raw: res.body };
 }
 
+/** Send a WhatsApp template message for business-initiated notifications. */
+async function sendWhatsAppTemplate({ to, templateName, language = 'en', parameters = [] }) {
+  const phone = String(to).replace(/\\s+/g, '').replace(/^0/, '255');
+  if (DEMO) {
+    console.log(`[WA TEMPLATE DEMO] → ${phone}: ${templateName}`);
+    return { success: true, channel: 'whatsapp', demo: true };
+  }
+  const token = process.env.WA_ACCESS_TOKEN;
+  const phoneId = process.env.WA_PHONE_NUMBER_ID;
+  if (!token || !phoneId || !templateName) {
+    throw new Error('WhatsApp Cloud API credentials and an approved WA_TEMPLATE_NAME are required');
+  }
+  const components = parameters.length ? [{
+    type: 'body',
+    parameters: parameters.map(value => ({ type: 'text', text: String(value) }))
+  }] : [];
+  const res = await httpsJson('POST', 'graph.facebook.com', `/v18.0/${phoneId}/messages`, {
+    Authorization: `Bearer ${token}`
+  }, {
+    messaging_product: 'whatsapp',
+    to: phone,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: language },
+      ...(components.length ? { components } : {})
+    }
+  });
+  return { success: res.status < 300, channel: 'whatsapp', raw: res.body };
+}
+
 function invoiceMessage(company, amount, dueDate) {
   return `MlimaniFleet: Habari ${company.name}. Malipo ya usajili TZS ${Number(amount).toLocaleString()} yanastahili ifikapo ${dueDate}. Lipa kupitia dashboard yako au piga +255... Asante.`;
 }
@@ -180,6 +211,7 @@ async function runSubscriptionReminders({ daysAhead = 3, channel = 'sms' } = {})
 module.exports = {
   sendSms,
   sendWhatsApp,
+  sendWhatsAppTemplate,
   runSubscriptionReminders,
   invoiceMessage,
   reminderMessage,

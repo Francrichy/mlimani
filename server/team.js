@@ -8,7 +8,7 @@ const crypto = require('crypto');
 
 const ROLE_PRESETS = {
   fleet_manager: {
-    label: 'Fleet Manager',
+    label: 'Company Owner',
     permissions: {
       vehicles: true, drivers: true, trips: true, maintenance: true, fuel: true,
       finance: true, gps: true, inventory: true, reports: true, billing: true, team: true
@@ -160,7 +160,15 @@ function updateCompanyUser(auth, id, body) {
   const users = read('users') || [];
   const idx = users.findIndex(u => u.id === id && u.company_id === auth.company_id);
   if (idx < 0) return null;
-  // cannot demote yourself removing team access accidentally handled by UI
+  if (id === auth.id && (body.role != null || body.permissions != null)) {
+    throw new Error('You cannot change your own role or permissions');
+  }
+  if (users[idx].role === 'fleet_manager' && auth.role !== 'fleet_manager') {
+    throw new Error('Only the company owner can manage the owner account');
+  }
+  if (users[idx].role === 'company_admin' && auth.role !== 'fleet_manager') {
+    throw new Error('Only the company owner can manage a Company Admin');
+  }
   if (body.name != null) users[idx].name = body.name;
   if (body.phone != null) users[idx].phone = body.phone;
   if (body.role != null) {
@@ -190,6 +198,10 @@ function deleteCompanyUser(auth, id) {
   if (!canManageTeam(auth)) throw new Error('No permission to manage team');
   if (id === auth.id) throw new Error('Cannot delete yourself');
   let users = read('users') || [];
+  const target = users.find(u => u.id === id && u.company_id === auth.company_id);
+  if (target && ['fleet_manager', 'company_admin'].includes(target.role) && auth.role !== 'fleet_manager') {
+    throw new Error('Only the company owner can delete a Company Admin or owner account');
+  }
   const before = users.length;
   users = users.filter(u => !(u.id === id && u.company_id === auth.company_id));
   if (users.length === before) return false;

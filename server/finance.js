@@ -35,6 +35,10 @@ function listLoans(auth) {
 function createLoan(auth, body) {
   if (!auth.company_id) throw new Error('No company');
   assertCompanyReference('vehicles', body.vehicle_id, auth.company_id, 'Vehicle');
+  const amount = Number(body.amount_tzs);
+  const amountPaid = Number(body.amount_paid_tzs) || 0;
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Loan amount must be greater than zero');
+  if (!Number.isFinite(amountPaid) || amountPaid < 0 || amountPaid > amount) throw new Error('Initial payment must be between zero and the loan amount');
   const loanDate = body.loan_date || today();
   const termDays = Number(body.term_days) || 30;
   const loan = {
@@ -45,8 +49,8 @@ function createLoan(auth, body) {
     supplier_phone: body.supplier_phone || '',
     vehicle_id: body.vehicle_id || null,
     description: body.description || '',
-    amount_tzs: Number(body.amount_tzs) || 0,
-    amount_paid_tzs: Number(body.amount_paid_tzs) || 0,
+    amount_tzs: amount,
+    amount_paid_tzs: amountPaid,
     loan_date: loanDate,
     term_days: termDays,
     due_date: body.due_date || daysFrom(loanDate, termDays),
@@ -65,7 +69,10 @@ function payLoan(auth, id, amount) {
   const all = read('supplier_loans') || [];
   const idx = all.findIndex(l => l.id === id && (auth.role === 'platform_admin' || l.company_id === auth.company_id));
   if (idx < 0) return null;
-  const paid = Number(amount) || 0;
+  const paid = Number(amount);
+  const balance = (all[idx].amount_tzs || 0) - (all[idx].amount_paid_tzs || 0);
+  if (!Number.isFinite(paid) || paid <= 0) throw new Error('Payment amount must be greater than zero');
+  if (paid > balance) throw new Error('Payment cannot exceed the outstanding balance');
   all[idx].amount_paid_tzs = (all[idx].amount_paid_tzs || 0) + paid;
   all[idx].balance_tzs = all[idx].amount_tzs - all[idx].amount_paid_tzs;
   if (all[idx].balance_tzs <= 0) {
@@ -113,11 +120,14 @@ function createInvoice(auth, body) {
   else if (terms === 'on_delivery') dueDate = body.delivery_date || invDate;
 
   const subtotal = Number(body.subtotal_tzs != null ? body.subtotal_tzs : body.total_tzs) || 0;
+  if (!Number.isFinite(subtotal) || subtotal <= 0) throw new Error('Invoice subtotal must be greater than zero');
   const vatEnabled = body.vat_enabled === true || body.vat_enabled === 'true' || body.vat_enabled === 1;
   const vatRate = vatEnabled ? (Number(body.vat_rate) || 18) : 0;
+  if (!Number.isFinite(vatRate) || vatRate < 0 || vatRate > 100) throw new Error('VAT rate must be between 0 and 100 percent');
   const vatAmount = Math.round(subtotal * vatRate / 100);
   const total = subtotal + vatAmount;
   const advance = Number(body.advance_tzs) || 0;
+  if (!Number.isFinite(advance) || advance < 0 || advance > total) throw new Error('Advance payment must be between zero and the invoice total');
   const inv = {
     id: uid(),
     company_id: auth.company_id,
@@ -157,7 +167,10 @@ function recordClientPayment(auth, id, amount) {
   const all = read('client_invoices') || [];
   const idx = all.findIndex(i => i.id === id && (auth.role === 'platform_admin' || i.company_id === auth.company_id));
   if (idx < 0) return null;
-  const paid = Number(amount) || 0;
+  const paid = Number(amount);
+  const balance = (all[idx].total_tzs || 0) - (all[idx].amount_paid_tzs || 0);
+  if (!Number.isFinite(paid) || paid <= 0) throw new Error('Payment amount must be greater than zero');
+  if (paid > balance) throw new Error('Payment cannot exceed the outstanding balance');
   all[idx].amount_paid_tzs = (all[idx].amount_paid_tzs || 0) + paid;
   all[idx].balance_tzs = all[idx].total_tzs - all[idx].amount_paid_tzs;
   if (all[idx].balance_tzs <= 0) {

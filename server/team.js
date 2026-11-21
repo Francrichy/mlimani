@@ -194,7 +194,10 @@ function updateCompanyUser(auth, id, body) {
     users[idx].permissions = normalizePermissions(users[idx].role, body.permissions);
   }
   if (body.active != null) users[idx].active = !!body.active;
-  if (body.password) users[idx].password = hashPassword(body.password);
+  if (body.password) {
+    if (String(body.password).length < 10) throw new Error('Password must be at least 10 characters');
+    users[idx].password = hashPassword(body.password);
+  }
   write('users', users);
   const u = users[idx];
   return {

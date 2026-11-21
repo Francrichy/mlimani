@@ -11,6 +11,8 @@ git clone <your-repo> mlimanifleet && cd mlimanifleet
 
 export PORT=3847
 export JWT_SECRET="$(openssl rand -hex 32)"
+export BOOTSTRAP_ADMIN_EMAIL="owner@example.com"
+export BOOTSTRAP_ADMIN_PASSWORD="use-a-unique-password-at-least-12-characters"
 export PAYMENT_DEMO=false   # after you set gateway keys
 export APP_URL=https://fleet.yourdomain.co.tz
 
@@ -69,7 +71,7 @@ docker compose up -d --build
 | Variable | Purpose |
 |----------|---------|
 | `PORT` | HTTP port (default 3847) |
-| `JWT_SECRET` | Token signing key |
+| `JWT_SECRET` | Required random token-signing key (at least 32 characters) |\n| `BOOTSTRAP_ADMIN_EMAIL` | First platform owner's email, used only when no users exist |\n| `BOOTSTRAP_ADMIN_PASSWORD` | First platform owner's password (at least 12 characters) |
 | `APP_URL` | Public URL for payment redirects/webhooks |
 | `PAYMENT_DEMO` | `true` = simulate payments |
 | `DATABASE_URL` | `postgres://user:pass@host:5432/db` |
@@ -115,7 +117,7 @@ Or schedule with a small Node cron inside the process later.
 
 ## 7. Go-live checklist
 
-1. Set strong `JWT_SECRET`
+1. Set strong `JWT_SECRET` and private bootstrap admin credentials before first startup
 2. Configure Selcom **or** PawaPay credentials; set `PAYMENT_DEMO=false`
 3. Configure SMS (Africa's Talking recommended in TZ) or WhatsApp
 4. HTTPS via Nginx + Certbot

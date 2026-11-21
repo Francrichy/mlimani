@@ -21,6 +21,12 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function assertCompanyReference(collection, id, companyId, label) {
+  if (!id) return;
+  const found = (read(collection) || []).some(item => item.id === id && item.company_id === companyId);
+  if (!found) throw new Error(`${label} does not belong to this company`);
+}
+
 // ---------- SUPPLIER LOANS (fuel / spare parts on credit) ----------
 function listLoans(auth) {
   return companyFilter(read('supplier_loans') || [], auth);
@@ -28,6 +34,7 @@ function listLoans(auth) {
 
 function createLoan(auth, body) {
   if (!auth.company_id) throw new Error('No company');
+  assertCompanyReference('vehicles', body.vehicle_id, auth.company_id, 'Vehicle');
   const loanDate = body.loan_date || today();
   const termDays = Number(body.term_days) || 30;
   const loan = {
@@ -96,6 +103,8 @@ function listInvoices(auth) {
 
 function createInvoice(auth, body) {
   if (!auth.company_id) throw new Error('No company');
+  assertCompanyReference('vehicles', body.vehicle_id, auth.company_id, 'Vehicle');
+  assertCompanyReference('trips', body.trip_id, auth.company_id, 'Trip');
   const terms = body.payment_terms || 'on_delivery'; // advance | on_delivery | credit_days
   const creditDays = Number(body.credit_days) || 0;
   const invDate = body.invoice_date || today();

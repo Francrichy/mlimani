@@ -543,16 +543,68 @@ async function handleApi(req, res, pathname) {
         revenue_all_tzs: revenueAll,
         revenue_month_tzs: revenueMonth,
         revenue_week_tzs: revenueWeek,
+        pending_payment_submissions: payments.filter(p => p.status === 'submitted').length,
         registered_this_week: registeredWeek.length,
         registered_last_30_days: registeredMonth.length
       },
       clients,
       delayed,
       registered_week: registeredWeek,
-      recent_payments: recentPayments
+      recent_payments: recentPayments,
+      payment_submissions: payments.filter(p => p.status === 'submitted')
+        .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+        .map(p => ({ ...p, company_name: (companies.find(c => c.id === p.company_id) || {}).name || '—' }))
     });
   }
 
+
+  // ---- ADMIN: manual payment review ----
+  const approvePaymentMatch = pathname.match(/^\/api\/admin\/payments\/([^/]+)\/approve$/);
+  if (approvePaymentMatch && method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    const paymentId = approvePaymentMatch[1];
+    const payments = read('payments') || [];
+    const pi = payments.findIndex(p => p.id === paymentId);
+    if (pi < 0) return send(res, 404, { error: 'Payment submission not found' });
+    if (payments[pi].status !== 'submitted') return send(res, 409, { error: 'This payment has already been reviewed' });
+    const companies = read('companies') || [];
+    const ci = companies.findIndex(c => c.id === payments[pi].company_id);
+    if (ci < 0) return send(res, 404, { error: 'Customer company not found' });
+    const days = Math.min(365, Math.max(1, Number(body.days) || 30));
+    const today = new Date();
+    const currentEnd = companies[ci].next_billing_date ? new Date(companies[ci].next_billing_date + 'T00:00:00Z') : today;
+    const start = currentEnd > today ? currentEnd : today;
+    start.setUTCDate(start.getUTCDate() + days);
+    const nextDate = start.toISOString().slice(0, 10);
+    companies[ci].subscription_status = 'active';
+    companies[ci].next_billing_date = nextDate;
+    companies[ci].trial_ends = null;
+    companies[ci].last_manual_payment_at = now();
+    companies[ci].last_manual_payment_note = 'Approved payment reference ' + payments[pi].transaction_reference;
+    write('companies', companies);
+    payments[pi].status = 'completed';
+    payments[pi].completed_at = now();
+    payments[pi].reviewed_at = now();
+    payments[pi].reviewed_by = requireAuth(req, res)?.id || null;
+    payments[pi].admin_note = String(body.note || '').trim().slice(0, 300);
+    write('payments', payments);
+    return send(res, 200, { ok: true, message: 'Payment approved. Subscription active until ' + nextDate, company: companies[ci], payment: payments[pi] });
+  }
+
+  const rejectPaymentMatch = pathname.match(/^\/api\/admin\/payments\/([^/]+)\/reject$/);
+  if (rejectPaymentMatch && method === 'POST') {
+    if (!requireAdmin(req, res)) return;
+    const paymentId = rejectPaymentMatch[1];
+    const payments = read('payments') || [];
+    const pi = payments.findIndex(p => p.id === paymentId);
+    if (pi < 0) return send(res, 404, { error: 'Payment submission not found' });
+    if (payments[pi].status !== 'submitted') return send(res, 409, { error: 'This payment has already been reviewed' });
+    payments[pi].status = 'rejected';
+    payments[pi].reviewed_at = now();
+    payments[pi].admin_note = String(body.note || 'Payment could not be verified').trim().slice(0, 300);
+    write('payments', payments);
+    return send(res, 200, { ok: true, message: 'Payment submission rejected. The customer can submit a corrected payment reference.', payment: payments[pi] });
+  }
 
   if (pathname.startsWith('/api/admin/companies/') && pathname.endsWith('/mark-paid') && method === 'POST') {
     if (!requireAdmin(req, res)) return;
@@ -695,7 +747,15 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
       current_tier: tier,
       monthly_amount: amount,
       payments,
-      providers: TZA_PROVIDERS
+      payment_instructions: {
+        bank_name: 'NMB Bank',
+        account_name: 'ANT LAB ECO SERVICE COMPANY LIMITED',
+        account_number: '34010004482',
+        mobile_network: 'Mixx by Yas',
+        mobile_number: '0676266814',
+        mobile_name: 'ANT LAB ECO SERVICE COMPANY LIMITED'
+      },
+      providers: []
     });
   }
 
@@ -789,81 +849,94 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
     if (!auth) return;
     if (auth.role === 'platform_admin') return send(res, 403, { error: 'Platform admin does not use company subscription plans' });
     if (!auth.company_id) return send(res, 400, { error: 'No company' });
-    const { phone, gateway, provider } = body;
-    if (!phone) return send(res, 400, { error: 'phone required' });
 
-    const company = read('companies').find(c => c.id === auth.company_id);
-    const vehicles = read('vehicles').filter(v => v.company_id === auth.company_id);
+    const methodName = String(body.payment_method || '').trim();
+    const reference = String(body.transaction_reference || '').trim();
+    const payerName = String(body.payer_name || '').trim();
+    const payerPhone = String(body.payer_phone || '').trim();
+    const amount = Number(body.amount);
+    const notes = String(body.notes || '').trim().slice(0, 500);
+    if (!['bank_transfer', 'mixx_yas'].includes(methodName)) {
+      return send(res, 400, { error: 'Choose NMB bank transfer or Mixx by Yas' });
+    }
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000000) {
+      return send(res, 400, { error: 'Enter a valid amount paid in TZS' });
+    }
+    if (reference.length < 4 || reference.length > 100) {
+      return send(res, 400, { error: 'Enter the transaction or bank reference (at least 4 characters)' });
+    }
+    if (!payerName) return send(res, 400, { error: 'Enter the name used to make the payment' });
+
+    const company = (read('companies') || []).find(c => c.id === auth.company_id);
+    if (!company) return send(res, 404, { error: 'Company not found' });
+    const payments = read('payments') || [];
+    const duplicate = payments.some(p => String(p.transaction_reference || '').toLowerCase() === reference.toLowerCase());
+    if (duplicate) return send(res, 409, { error: 'This transaction reference has already been submitted' });
+
+    const vehicles = (read('vehicles') || []).filter(v => v.company_id === auth.company_id);
     const count = Math.max(vehicles.length, 1);
-    const { tier, amount } = priceForCount(count);
-    if (!amount) return send(res, 400, { error: 'Could not calculate price' });
-
-    const orderId = uid();
+    const { tier } = priceForCount(count);
     const payment = {
-      id: orderId,
+      id: uid(),
       company_id: auth.company_id,
       amount,
       currency: 'TZS',
-      phone,
-      gateway: gateway || 'selcom',
-      provider: provider || null,
-      status: 'pending',
+      phone: payerPhone || company.phone || '',
+      payer_name: payerName,
+      payer_phone: payerPhone,
+      payment_method: methodName,
+      gateway: 'manual',
+      provider: methodName === 'bank_transfer' ? 'NMB Bank' : 'Mixx by Yas',
+      transaction_reference: reference,
+      notes,
+      status: 'submitted',
       tier_id: tier?.id,
       vehicle_count: count,
-      created_at: now()
+      created_at: now(),
+      whatsapp_notification: 'not_configured'
     };
-
-    let result;
-    try {
-      if ((gateway || 'selcom') === 'pawapay') {
-        result = await pawapayDeposit({
-          amount,
-          phone: phone.replace(/^0/, '255'),
-          provider: provider || 'VODACOM_TZA',
-          depositId: orderId,
-          message: `MlimaniFleet ${tier?.name || ''} subscription`
-        });
-      } else {
-        result = await selcomCreateOrder({
-          amount,
-          phone,
-          name: company?.name,
-          email: company?.email,
-          orderId,
-          webhookUrl: (process.env.APP_URL || 'http://localhost:3847') + '/api/webhooks/selcom'
-        });
-      }
-    } catch (e) {
-      return send(res, 502, { error: e.message });
-    }
-
-    payment.gateway_ref = result.reference || result.depositId || orderId;
-    payment.gateway_response = result;
-
-    // DEMO: auto-complete
-    if (DEMO && result.success) {
-      payment.status = 'completed';
-      payment.completed_at = now();
-      // extend subscription
-      const companies = read('companies');
-      const idx = companies.findIndex(c => c.id === auth.company_id);
-      if (idx >= 0) {
-        companies[idx].subscription_status = 'active';
-        companies[idx].vehicle_limit = tier.max_vehicles;
-        companies[idx].next_billing_date = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-        write('companies', companies);
-      }
-    }
-
-    const payments = read('payments');
     payments.push(payment);
     write('payments', payments);
 
-    return send(res, 200, {
-      payment,
-      message: DEMO
-        ? 'DEMO payment completed successfully. Subscription activated for 30 days.'
-        : 'Payment initiated. Confirm on your phone.'
+    // WhatsApp Cloud API is optional. In-app owner notifications work without it.
+    if (process.env.NOTIFY_DEMO === 'false' && process.env.WA_ACCESS_TOKEN && process.env.WA_PHONE_NUMBER_ID) {
+      const message = [
+        'Mlimani Fleet: New payment submitted for verification.',
+        'Company: ' + company.name,
+        'Amount: TZS ' + amount.toLocaleString('en-TZ'),
+        'Method: ' + (methodName === 'bank_transfer' ? 'NMB Bank' : 'Mixx by Yas'),
+        'Reference: ' + reference,
+        'Payer: ' + payerName,
+        'Review it in the Platform Owner dashboard.'
+      ].join('\n');
+      try {
+        const sent = await notify.sendWhatsApp({
+          to: process.env.PAYMENT_NOTIFY_WHATSAPP || '255676266814',
+          message
+        });
+        payment.whatsapp_notification = sent.success && !sent.demo ? 'sent' : 'not_configured';
+      } catch (e) {
+        payment.whatsapp_notification = 'failed';
+        console.warn('Payment WhatsApp notification failed:', e.message);
+      }
+      const latestPayments = read('payments') || [];
+      const pi = latestPayments.findIndex(p => p.id === payment.id);
+      if (pi >= 0) {
+        latestPayments[pi].whatsapp_notification = payment.whatsapp_notification;
+        write('payments', latestPayments);
+      }
+    }
+
+    return send(res, 201, {
+      payment: {
+        id: payment.id,
+        amount: payment.amount,
+        payment_method: payment.payment_method,
+        transaction_reference: payment.transaction_reference,
+        status: payment.status,
+        created_at: payment.created_at
+      },
+      message: 'Payment submission received. Your subscription will be activated after the Platform Owner verifies the payment.'
     });
   }
 

@@ -232,70 +232,34 @@ function seedIfEmpty() {
   const users = read('users');
   if (users.length) return;
 
-  const adminId = uid();
-  const companyId = uid();
+  // Never create public demo credentials in a fresh production database.
+  // Set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD in the host's
+  // private environment settings to create the first platform owner.
+  const email = String(process.env.BOOTSTRAP_ADMIN_EMAIL || '').trim().toLowerCase();
+  const password = String(process.env.BOOTSTRAP_ADMIN_PASSWORD || '');
+  if (!email || password.length < 12) {
+    console.warn('No users created: configure BOOTSTRAP_ADMIN_EMAIL and a BOOTSTRAP_ADMIN_PASSWORD of at least 12 characters.');
+    return;
+  }
 
   write('users', [{
-    id: adminId,
-    email: 'admin@mlimanifleet.tz',
-    password: hashPassword('admin123'),
-    name: 'Platform Admin',
+    id: uid(),
+    email,
+    password: hashPassword(password),
+    name: 'Platform Owner',
     role: 'platform_admin',
     company_id: null,
-    created_at: now()
-  }, {
-    id: uid(),
-    email: 'demo@mlimanifleet.tz',
-    password: hashPassword('demo123'),
-    name: 'Juma Mwangi',
-    role: 'fleet_manager',
-    company_id: companyId,
-    permissions: team.ROLE_PRESETS.fleet_manager.permissions,
     active: true,
     created_at: now()
   }]);
-
-  write('companies', [{
-    id: companyId,
-    name: 'Demo Transport Ltd',
-    phone: '255712345678',
-    email: 'demo@mlimanifleet.tz',
-    subscription_status: 'active',
-    tin: '',
-    vrn: '',
-    address: 'Dar es Salaam, Tanzania',
-    city: 'Dar es Salaam',
-    vat_default: false,
-    usd_tzs_rate: 2600,
-    invoice_footer: 'Thank you for your business',
-
-    vehicle_limit: 10,
-    current_vehicles: 3,
-    next_billing_date: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
-    created_at: now()
-  }]);
-
-  write('vehicles', [
-    { id: uid(), company_id: companyId, plate: 'T 234 ABC', type: 'truck', make: 'Isuzu', model: 'FVR', year: 2019, status: 'on_route', odometer: 142800, driver_id: null, created_at: now() },
-    { id: uid(), company_id: companyId, plate: 'T 891 KLM', type: 'daladala', make: 'Toyota', model: 'Coaster', year: 2018, status: 'on_route', odometer: 89200, driver_id: null, created_at: now() },
-    { id: uid(), company_id: companyId, plate: 'T 456 XYZ', type: 'truck', make: 'Scania', model: 'R450', year: 2021, status: 'workshop', odometer: 67800, driver_id: null, created_at: now() }
-  ]);
-
-  write('drivers', [
-    { id: uid(), company_id: companyId, name: 'Hassan Juma', phone: '255754111222', license_no: 'DL-88291', license_expiry: '2027-06-15', status: 'active', created_at: now() },
-    { id: uid(), company_id: companyId, name: 'Amina Said', phone: '255713333444', license_no: 'DL-44102', license_expiry: '2026-10-28', status: 'active', created_at: now() }
-  ]);
-
+  write('companies', []);
+  write('vehicles', []);
+  write('drivers', []);
   write('subscriptions', []);
   write('payments', []);
-  write('pricing_tiers', []); // will auto-seed on first get
-  getPricingTiers();
-
-  console.log('✓ Seeded demo data');
-  console.log('  Owner (platform admin) — see seed credentials in README');
-  if (process.env.SEED_DEMO !== 'false') console.log('  Demo: demo@mlimanifleet.tz / demo123');
+  write('pricing_tiers', []);
+  console.log('Platform owner account initialized from secure environment settings.');
 }
-
 
 function activatePaymentByRef(ref) {
   if (!ref) return false;

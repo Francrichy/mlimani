@@ -21,6 +21,7 @@ const team = require('./team');
 const inv = require('./inventory');
 const exp = require('./expenses');
 const mrules = require('./maint_rules');
+const integration = require('./integrations');
 
 const PORT = process.env.PORT || 3847;
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -333,6 +334,9 @@ async function handleApi(req, res, pathname) {
       }
     }
   }
+
+  // ---- REST API + MCP AI INTEGRATION ----
+  if (await integration.handle(req, res, pathname, { getAuth, send, body })) return;
 
   // ---- AUTH ----
   if (pathname === '/api/auth/register' && method === 'POST') {

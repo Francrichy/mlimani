@@ -138,11 +138,14 @@ async function initDb() {
     console.log('DB: PostgreSQL ready (', rows.length || 'migrated', 'collections)');
     return { mode: 'postgres', collections: rows.length };
   } catch (e) {
-    console.warn('DB: PostgreSQL failed, using JSON files —', e.message);
+    console.error('DB: PostgreSQL connection failed; refusing to start with temporary JSON storage —', e.message);
     usePg = false;
+    ready = false;
+    if (pool) {
+      try { await pool.end(); } catch {}
+    }
     pool = null;
-    ready = true;
-    return { mode: 'json', error: e.message };
+    throw new Error('PostgreSQL is configured but unavailable. Check DATABASE_URL and database status before restarting.');
   }
 }
 

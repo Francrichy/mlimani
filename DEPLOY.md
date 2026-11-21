@@ -71,18 +71,21 @@ docker compose up -d --build
 | Variable | Purpose |
 |----------|---------|
 | `PORT` | HTTP port (default 3847) |
-| `JWT_SECRET` | Required random token-signing key (at least 32 characters) |\n| `BOOTSTRAP_ADMIN_EMAIL` | First platform owner's email, used only when no users exist |\n| `BOOTSTRAP_ADMIN_PASSWORD` | First platform owner's password (at least 12 characters) |
+| `JWT_SECRET` | Required random token-signing key (at least 32 characters) |
+| `BOOTSTRAP_ADMIN_EMAIL` | First platform owner's email, used only when no users exist |
+| `BOOTSTRAP_ADMIN_PASSWORD` | First platform owner's password (at least 12 characters) |
 | `APP_URL` | Public URL for payment redirects/webhooks |
 | `PAYMENT_DEMO` | `true` = simulate payments |
 | `DATABASE_URL` | `postgres://user:pass@host:5432/db` |
-
-When `DATABASE_URL` is configured but PostgreSQL cannot be reached, the server now stops instead of silently switching to temporary JSON storage. On Render, use the database's Internal Database URL when the web service and database are in the same region.
 | `SELCOM_VENDOR_ID` / `SELCOM_API_KEY` / `SELCOM_API_SECRET` | Selcom live |
 | `PAWAPAY_API_TOKEN` / `PAWAPAY_ENV` | PawaPay (`sandbox` or `live`) |
 | `NOTIFY_DEMO` | `true` = log SMS/WA only |
 | `AT_USERNAME` / `AT_API_KEY` | Africa's Talking SMS |
 | `TWILIO_*` | Twilio SMS alternative |
 | `WA_ACCESS_TOKEN` / `WA_PHONE_NUMBER_ID` | WhatsApp Cloud API |
+
+When `DATABASE_URL` is configured but PostgreSQL cannot be reached, the server now stops instead of silently switching to temporary JSON storage. On Render, use the database's Internal Database URL when the web service and database are in the same region.
+
 
 ---
 

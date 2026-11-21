@@ -28,11 +28,6 @@ node server/index.js
 # http://localhost:3847
 ```
 
-| Role | Email | Password |
-|------|-------|----------|
-| Fleet | demo@mlimanifleet.tz | demo123 |
-| Admin | admin@mlimanifleet.tz | admin123 |
-
 ```bash
 docker compose up -d --build
 ```

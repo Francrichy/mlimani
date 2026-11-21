@@ -112,7 +112,9 @@ function normalizePermissions(role, supplied) {
   const allowed = ['vehicles','drivers','trips','maintenance','fuel','finance','gps','inventory','reports','billing','team'];
   const preset = ROLE_PRESETS[role]?.permissions || ROLE_PRESETS.viewer.permissions;
   if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) return { ...preset };
-  return Object.fromEntries(allowed.map(key => [key, supplied[key] === true]));
+  const normalized = Object.fromEntries(allowed.map(key => [key, supplied[key] === true]));
+  if (role === 'custom') normalized.team = false;
+  return normalized;
 }
 
 function createCompanyUser(auth, body) {

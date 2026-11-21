@@ -118,9 +118,9 @@ async function bootApp() {
     const nameEl = document.getElementById('user-name');
     if (nameEl) nameEl.textContent = currentUser.name || currentUser.email || 'User';
     const isAdmin = currentUser.role === 'platform_admin';
-    const isManager = currentUser.role === 'fleet_manager' || (currentUser.permissions && currentUser.permissions.team);
+    const isManager = currentUser.role === 'fleet_manager' || currentUser.role === 'company_admin';
     const roleEl = document.getElementById('user-role');
-    if (roleEl) roleEl.textContent = isAdmin ? 'Platform Admin' : (currentUser.role === 'fleet_manager' ? 'Fleet Manager' : (currentUser.role || 'User').replace(/_/g,' '));
+    if (roleEl) roleEl.textContent = isAdmin ? 'Platform Admin' : (currentUser.role === 'fleet_manager' ? 'Company Owner' : (currentUser.role || 'User').replace(/_/g,' '));
     const av = document.getElementById('user-avatar');
     if (av) av.textContent = (currentUser.name || currentUser.email || '?').slice(0, 2).toUpperCase();
 
@@ -146,7 +146,7 @@ async function bootApp() {
         document.getElementById('nav-subscription')?.classList.add('hidden');
         document.getElementById('btn-subscription')?.classList.add('hidden');
       }
-      if (isManager || perms.team) document.getElementById('nav-team')?.classList.remove('hidden');
+      if (isManager) document.getElementById('nav-team')?.classList.remove('hidden');
       else document.getElementById('nav-team')?.classList.add('hidden');
 
       const navMap = {
@@ -2062,14 +2062,16 @@ function printReport() {
 
 async function renderTeam() {
   const { users, presets } = await api('/api/team');
-  const presetOpts = Object.entries(presets || {}).filter(([k]) => k !== 'fleet_manager').map(([k,v]) =>
-    `<option value="${k}">${v.label}</option>`).join('');
+  const canAppointAdmin = currentUser?.role === 'fleet_manager';
+  const presetOpts = Object.entries(presets || {}).filter(([k]) =>
+    k !== 'fleet_manager' && (k !== 'company_admin' || canAppointAdmin)
+  ).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('');
   return `
   <div class="page-enter space-y-5">
     <div class="flex justify-between items-center">
       <div>
         <p class="text-sm text-slate-500">${users.length} user(s) in your company</p>
-        <p class="text-xs text-slate-400 mt-0.5">Fleet manager can add staff and set what they can access</p>
+        <p class="text-xs text-slate-400 mt-0.5">Company owners and admins can add staff and assign module access</p>
       </div>
       <button onclick="document.getElementById('team-form').classList.toggle('hidden')" class="bg-brand-600 text-white text-sm px-4 py-2 rounded-lg flex items-center gap-2">
         <i data-lucide="user-plus" class="w-4 h-4"></i> Add user
@@ -2081,12 +2083,18 @@ async function renderTeam() {
         <input id="tu-name" placeholder="Full name" class="border rounded-lg px-3 py-2 text-sm">
         <input id="tu-email" type="email" placeholder="Email" class="border rounded-lg px-3 py-2 text-sm">
         <input id="tu-phone" placeholder="Phone" class="border rounded-lg px-3 py-2 text-sm">
-        <input id="tu-password" type="password" placeholder="Password (min 6)" class="border rounded-lg px-3 py-2 text-sm">
-        <select id="tu-role" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
+        <input id="tu-password" type="password" minlength="10" placeholder="Password (min 10; leave blank to generate)" class="border rounded-lg px-3 py-2 text-sm">
+        <select id="tu-role" onchange="toggleCustomPermissions()" class="border rounded-lg px-3 py-2 text-sm sm:col-span-2">
           ${presetOpts}
         </select>
       </div>
-      <p class="text-xs text-slate-500">Roles: Dispatcher (trips/GPS) · Accountant (finance/fuel) · Workshop (maintenance/parts) · Viewer (read-only)</p>
+      <div id="tu-custom-permissions" class="hidden border rounded-lg p-3">
+        <p class="text-xs font-semibold text-slate-700 mb-2">Select permissions for this user</p>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+          ${[['vehicles','Vehicles'],['drivers','Drivers'],['trips','Trips'],['maintenance','Maintenance'],['fuel','Fuel'],['finance','Finance'],['gps','GPS tracking'],['inventory','Warehouse'],['reports','Reports'],['billing','Billing'],['team','Manage team']].map(([key,label]) => `<label class="flex items-center gap-2"><input type="checkbox" data-custom-permission="${key}"> ${label}</label>`).join('')}
+        </div>
+      </div>
+      <p class="text-xs text-slate-500">Available roles include Company Admin, Operations, Accountant, Dispatcher, Workshop, Warehouse Officer, Driver, Auditor, Viewer and Custom Permissions.</p>
       <button onclick="saveTeamUser()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm">Create user</button>
     </div>
     <div class="bg-white rounded-xl border overflow-hidden">
@@ -2104,7 +2112,7 @@ async function renderTeam() {
               <td class="py-3"><span class="text-xs px-2 py-0.5 rounded bg-slate-100">${(u.role||'').replace(/_/g,' ')}</span></td>
               <td class="py-3 text-xs text-slate-500 max-w-xs truncate">${keys || '—'}</td>
               <td class="py-3"><span class="text-xs px-2 py-0.5 rounded ${u.active!==false?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-700'}">${u.active!==false?'Active':'Disabled'}</span></td>
-              <td class="py-3 pr-4">${u.role==='fleet_manager'?'':`<button onclick="removeTeamUser('${u.id}')" class="text-xs text-red-500">Remove</button>`}</td>
+              <td class="py-3 pr-4">${u.role==='fleet_manager' || (u.role==='company_admin' && currentUser?.role!=='fleet_manager')?'':`<button onclick="removeTeamUser('${u.id}')" class="text-xs text-red-500">Remove</button>`}</td>
             </tr>`;
           }).join('') || '<tr><td colspan="6" class="px-5 py-8 text-center text-slate-400">No users</td></tr>'}
         </tbody>
@@ -2112,14 +2120,24 @@ async function renderTeam() {
     </div>
   </div>`;
 }
+function toggleCustomPermissions() {
+  const isCustom = document.getElementById('tu-role')?.value === 'custom';
+  document.getElementById('tu-custom-permissions')?.classList.toggle('hidden', !isCustom);
+}
+
 async function saveTeamUser() {
   try {
+    const role = document.getElementById('tu-role').value;
+    const permissions = role === 'custom'
+      ? Object.fromEntries([...document.querySelectorAll('[data-custom-permission]')].map(el => [el.dataset.customPermission, el.checked]))
+      : undefined;
     const res = await api('/api/team', { method:'POST', body: JSON.stringify({
       name: document.getElementById('tu-name').value,
       email: document.getElementById('tu-email').value,
       phone: document.getElementById('tu-phone').value,
       password: document.getElementById('tu-password').value,
-      role: document.getElementById('tu-role').value
+      role,
+      ...(permissions ? { permissions } : {})
     })});
     alert('User created' + (res.user?.temp_password ? '. Temp password: ' + res.user.temp_password : ''));
     showPage('team');

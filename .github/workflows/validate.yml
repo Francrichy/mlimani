@@ -18,6 +18,8 @@ jobs:
         run: npm install
       - name: Check server JavaScript syntax
         run: find server -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Check browser JavaScript syntax
+        run: node --check public/js/app.js
       - name: Run authentication tests
         run: npm test
       - name: Run project build command

@@ -2091,7 +2091,7 @@ async function renderTeam() {
       <div id="tu-custom-permissions" class="hidden border rounded-lg p-3">
         <p class="text-xs font-semibold text-slate-700 mb-2">Select permissions for this user</p>
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-          ${[['vehicles','Vehicles'],['drivers','Drivers'],['trips','Trips'],['maintenance','Maintenance'],['fuel','Fuel'],['finance','Finance'],['gps','GPS tracking'],['inventory','Warehouse'],['reports','Reports'],['billing','Billing'],['team','Manage team']].map(([key,label]) => `<label class="flex items-center gap-2"><input type="checkbox" data-custom-permission="${key}"> ${label}</label>`).join('')}
+          ${[['vehicles','Vehicles'],['drivers','Drivers'],['trips','Trips'],['maintenance','Maintenance'],['fuel','Fuel'],['finance','Finance'],['gps','GPS tracking'],['inventory','Warehouse'],['reports','Reports'],['billing','Billing']].map(([key,label]) => `<label class="flex items-center gap-2"><input type="checkbox" data-custom-permission="${key}"> ${label}</label>`).join('')}
         </div>
       </div>
       <p class="text-xs text-slate-500">Available roles include Company Admin, Operations, Accountant, Dispatcher, Workshop, Warehouse Officer, Driver, Auditor, Viewer and Custom Permissions.</p>

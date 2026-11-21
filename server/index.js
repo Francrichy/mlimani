@@ -159,6 +159,45 @@ function isSubscriptionFreePath(pathname) {
   return false;
 }
 
+/** Enforce company module permissions on the server, not only in the UI. */
+function requiredModulePermission(pathname) {
+  const rules = [
+    ['/api/vehicles', 'vehicles'],
+    ['/api/drivers', 'drivers'],
+    ['/api/trips', 'trips'],
+    ['/api/maintenance', 'maintenance'],
+    ['/api/fuel', 'fuel'],
+    ['/api/gps', 'gps'],
+    ['/api/inventory', 'inventory'],
+    ['/api/expenses', 'finance'],
+    ['/api/finance', 'finance'],
+    ['/api/loans', 'finance'],
+    ['/api/invoices', 'finance'],
+    ['/api/reports', 'reports'],
+    ['/api/team', 'team'],
+    ['/api/company', 'billing'],
+    ['/api/billing', 'billing']
+  ];
+  const match = rules.find(([prefix]) => pathname === prefix || pathname.startsWith(prefix + '/'));
+  return match ? match[1] : null;
+}
+
+function enforceModulePermission(req, res, pathname) {
+  const auth = getAuth(req);
+  if (!auth || auth.role === 'platform_admin') return true;
+  const permission = requiredModulePermission(pathname);
+  if (!permission) return true;
+  if (!auth.company_id) {
+    send(res, 403, { error: 'Company account required' });
+    return false;
+  }
+  const user = (read('users') || []).find(u => u.id === auth.id);
+  const permissions = user?.permissions || team.ROLE_PRESETS[user?.role]?.permissions || {};
+  if (user?.role === 'fleet_manager' || permissions[permission] === true) return true;
+  send(res, 403, { error: 'You do not have permission to access this module', code: 'MODULE_PERMISSION_DENIED', permission });
+  return false;
+}
+
 
 
 function serveStatic(req, res, pathname) {
@@ -305,6 +344,8 @@ async function handleApi(req, res, pathname) {
     return res.end();
   }
 
+
+  if (pathname.startsWith('/api/') && !enforceModulePermission(req, res, pathname)) return;
 
   // ---- SUBSCRIPTION GATE (lock unpaid / expired) ----
   if (pathname.startsWith('/api/') && method !== 'OPTIONS') {

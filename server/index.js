@@ -50,7 +50,22 @@ function parseBody(req) {
 function getAuth(req) {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
-  return verifyToken(token);
+  const claims = verifyToken(token);
+  if (!claims || !claims.id) return null;
+
+  // Always use current database account data so disabled users and changed
+  // roles/permissions take effect immediately, without waiting for token expiry.
+  const currentUser = (read('users') || []).find(u => u.id === claims.id);
+  if (!currentUser || currentUser.active === false) return null;
+
+  return {
+    ...claims,
+    id: currentUser.id,
+    email: currentUser.email,
+    role: currentUser.role,
+    company_id: currentUser.company_id || null,
+    permissions: currentUser.permissions || null
+  };
 }
 
 function requireAuth(req, res) {
@@ -144,6 +159,56 @@ function isSubscriptionFreePath(pathname) {
   return false;
 }
 
+/** Enforce company module permissions on the server, not only in the UI. */
+function requiredModulePermission(pathname) {
+  const rules = [
+    ['/api/vehicles', 'vehicles'],
+    ['/api/drivers', 'drivers'],
+    ['/api/trips', 'trips'],
+    ['/api/maintenance', 'maintenance'],
+    ['/api/fuel', 'fuel'],
+    ['/api/gps', 'gps'],
+    ['/api/inventory', 'inventory'],
+    ['/api/expenses', 'finance'],
+    ['/api/finance', 'finance'],
+    ['/api/loans', 'finance'],
+    ['/api/invoices', 'finance'],
+    ['/api/reports', 'reports'],
+    ['/api/dashboard', 'reports'],
+    ['/api/notifications', 'billing'],
+    ['/api/team', 'team'],
+    ['/api/company', 'billing'],
+    ['/api/billing', 'billing']
+  ];
+  const match = rules.find(([prefix]) => pathname === prefix || pathname.startsWith(prefix + '/'));
+  return match ? match[1] : null;
+}
+
+function enforceModulePermission(req, res, pathname) {
+  const auth = getAuth(req);
+  if (!auth || auth.role === 'platform_admin') return true;
+  const permission = requiredModulePermission(pathname);
+  if (!permission) return true;
+  if (!auth.company_id) {
+    send(res, 403, { error: 'Company account required' });
+    return false;
+  }
+  const user = (read('users') || []).find(u => u.id === auth.id);
+  const permissions = user?.permissions || team.ROLE_PRESETS[user?.role]?.permissions || {};
+  if (user?.role === 'fleet_manager') return true;
+  if (permissions[permission] !== true) {
+    send(res, 403, { error: 'You do not have permission to access this module', code: 'MODULE_PERMISSION_DENIED', permission });
+    return false;
+  }
+  // Auditors and viewers may inspect records but must not create, change or delete them.
+  if (['auditor', 'viewer'].includes(user?.role) && !['GET', 'HEAD'].includes(req.method)) {
+    send(res, 403, { error: 'This role has read-only access', code: 'READ_ONLY_ROLE' });
+    return false;
+  }
+  return true;
+  return false;
+}
+
 
 
 function serveStatic(req, res, pathname) {
@@ -178,70 +243,28 @@ function seedIfEmpty() {
   const users = read('users');
   if (users.length) return;
 
-  const adminId = uid();
-  const companyId = uid();
+  // Never create public demo credentials in a fresh production database.
+  // Set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD in the host's
+  // private environment settings to create the first platform owner.
+  const email = String(process.env.BOOTSTRAP_ADMIN_EMAIL || '').trim().toLowerCase();
+  const password = String(process.env.BOOTSTRAP_ADMIN_PASSWORD || '');
+  if (!email || password.length < 12) {
+    console.warn('No users created: configure BOOTSTRAP_ADMIN_EMAIL and a BOOTSTRAP_ADMIN_PASSWORD of at least 12 characters.');
+    return;
+  }
 
   write('users', [{
-    id: adminId,
-    email: 'admin@mlimanifleet.tz',
-    password: hashPassword('admin123'),
-    name: 'Platform Admin',
+    id: uid(),
+    email,
+    password: hashPassword(password),
+    name: 'Platform Owner',
     role: 'platform_admin',
     company_id: null,
-    created_at: now()
-  }, {
-    id: uid(),
-    email: 'demo@mlimanifleet.tz',
-    password: hashPassword('demo123'),
-    name: 'Juma Mwangi',
-    role: 'fleet_manager',
-    company_id: companyId,
-    permissions: team.ROLE_PRESETS.fleet_manager.permissions,
     active: true,
     created_at: now()
   }]);
-
-  write('companies', [{
-    id: companyId,
-    name: 'Demo Transport Ltd',
-    phone: '255712345678',
-    email: 'demo@mlimanifleet.tz',
-    subscription_status: 'active',
-    tin: '',
-    vrn: '',
-    address: 'Dar es Salaam, Tanzania',
-    city: 'Dar es Salaam',
-    vat_default: false,
-    usd_tzs_rate: 2600,
-    invoice_footer: 'Thank you for your business',
-
-    vehicle_limit: 10,
-    current_vehicles: 3,
-    next_billing_date: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
-    created_at: now()
-  }]);
-
-  write('vehicles', [
-    { id: uid(), company_id: companyId, plate: 'T 234 ABC', type: 'truck', make: 'Isuzu', model: 'FVR', year: 2019, status: 'on_route', odometer: 142800, driver_id: null, created_at: now() },
-    { id: uid(), company_id: companyId, plate: 'T 891 KLM', type: 'daladala', make: 'Toyota', model: 'Coaster', year: 2018, status: 'on_route', odometer: 89200, driver_id: null, created_at: now() },
-    { id: uid(), company_id: companyId, plate: 'T 456 XYZ', type: 'truck', make: 'Scania', model: 'R450', year: 2021, status: 'workshop', odometer: 67800, driver_id: null, created_at: now() }
-  ]);
-
-  write('drivers', [
-    { id: uid(), company_id: companyId, name: 'Hassan Juma', phone: '255754111222', license_no: 'DL-88291', license_expiry: '2027-06-15', status: 'active', created_at: now() },
-    { id: uid(), company_id: companyId, name: 'Amina Said', phone: '255713333444', license_no: 'DL-44102', license_expiry: '2026-10-28', status: 'active', created_at: now() }
-  ]);
-
-  write('subscriptions', []);
-  write('payments', []);
-  write('pricing_tiers', []); // will auto-seed on first get
-  getPricingTiers();
-
-  console.log('✓ Seeded demo data');
-  console.log('  Owner (platform admin) — see seed credentials in README');
-  if (process.env.SEED_DEMO !== 'false') console.log('  Demo: demo@mlimanifleet.tz / demo123');
+  console.log('Platform owner account initialized from secure environment settings.');
 }
-
 
 function activatePaymentByRef(ref) {
   if (!ref) return false;
@@ -291,6 +314,8 @@ async function handleApi(req, res, pathname) {
   }
 
 
+  if (pathname.startsWith('/api/') && !enforceModulePermission(req, res, pathname)) return;
+
   // ---- SUBSCRIPTION GATE (lock unpaid / expired) ----
   if (pathname.startsWith('/api/') && method !== 'OPTIONS') {
     if (!isSubscriptionFreePath(pathname)) {
@@ -315,6 +340,7 @@ async function handleApi(req, res, pathname) {
     let email = (body.email || '').trim().toLowerCase();
     let phone = normalizePhone(body.phone || '');
     if (!password || !company_name) return send(res, 400, { error: 'Company name and password required' });
+    if (String(password).length < 10) return send(res, 400, { error: 'Password must be at least 10 characters' });
     if (!phone && !email) return send(res, 400, { error: 'Provide mobile number or email' });
     if (phone && !/^255[67]\d{8}$/.test(phone)) {
       return send(res, 400, { error: 'Enter a valid Tanzania mobile (e.g. 07XXXXXXXX)' });
@@ -384,6 +410,9 @@ async function handleApi(req, res, pathname) {
     }
     if (!user || !verifyPassword(password, user.password)) {
       return send(res, 401, { error: 'Invalid login or password' });
+    }
+    if (user.active === false) {
+      return send(res, 403, { error: 'This account has been disabled. Contact your company administrator.' });
     }
     const token = createToken({ id: user.id, email: user.email, role: user.role, company_id: user.company_id });
     return send(res, 200, {
@@ -1288,8 +1317,8 @@ if (pathname === '/api/billing/summary' && method === 'GET') {
 
   if (pathname === '/api/gps/webhook' && method === 'POST') {
     const secret = process.env.GPS_WEBHOOK_SECRET;
-    if (secret && req.headers['x-gps-secret'] !== secret) {
-      return send(res, 401, { error: 'Invalid webhook secret' });
+    if (!secret || req.headers['x-gps-secret'] !== secret) {
+      return send(res, 401, { error: 'Invalid or missing GPS webhook secret' });
     }
     const result = gps.ingestPosition({
       imei: body.imei || body.device_id,
@@ -1360,11 +1389,18 @@ const server = http.createServer(async (req, res) => {
 });
 
 (async function boot() {
+  if (String(process.env.JWT_SECRET || '').length < 32) {
+    console.error('Startup blocked: configure JWT_SECRET with at least 32 random characters.');
+    process.exit(1);
+    return;
+  }
   try {
     const dbInfo = await initDb();
     console.log('Storage mode:', dbInfo.mode);
   } catch (e) {
-    console.warn('DB init error', e.message);
+    console.error('Database initialization failed; server will not start:', e.message);
+    process.exit(1);
+    return;
   }
   seedIfEmpty();
   try {
@@ -1386,8 +1422,7 @@ const server = http.createServer(async (req, res) => {
     console.log(`  ║     http://localhost:${PORT}                 ║`);
     console.log('  ╚══════════════════════════════════════════╝');
     console.log('');
-    console.log('  Platform admin: admin@mlimanifleet.tz (change password after launch)');
-    if (process.env.SEED_DEMO !== 'false') console.log('  Demo fleet: demo@mlimanifleet.tz / demo123');
+    console.log('  Platform owner account is created from private bootstrap settings when required.');
     console.log(`  Payment mode: ${DEMO ? 'DEMO (auto-success)' : 'LIVE'}`);
     console.log('');
   });

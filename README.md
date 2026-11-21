@@ -28,11 +28,6 @@ node server/index.js
 # http://localhost:3847
 ```
 
-| Role | Email | Password |
-|------|-------|----------|
-| Fleet | demo@mlimanifleet.tz | demo123 |
-| Admin | admin@mlimanifleet.tz | admin123 |
-
 ```bash
 docker compose up -d --build
 ```
@@ -43,11 +38,12 @@ See `.env.example` and **DEPLOY.md** for production.
 ## Trial period
 New companies get a **7-day free trial**.
 
-## Logins (first seed)
+## Secure first-time setup
 
-| Role | Email | Password | Use |
-|------|-------|----------|-----|
-| **You (platform owner)** | `admin@mlimanifleet.tz` | `admin123` | Pricing, all companies |
-| Demo fleet manager | `demo@mlimanifleet.tz` | `demo123` | Test only — remove on live |
+A fresh database does not receive public demo accounts. Configure these private environment variables on the hosting provider before the first startup:
 
-**Production:** Change the admin password immediately. Remove or disable demo accounts. Set `SEED_DEMO=false` so demo is not recreated on empty DB.
+- `JWT_SECRET`: a randomly generated secret of at least 32 characters.
+- `BOOTSTRAP_ADMIN_EMAIL`: the email address for the first platform owner.
+- `BOOTSTRAP_ADMIN_PASSWORD`: a unique password of at least 12 characters.
+
+The first platform-owner account is created only when the users collection is empty. Existing user accounts are not replaced by this process. Never commit real secrets or passwords to the repository.

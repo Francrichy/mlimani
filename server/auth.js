@@ -3,7 +3,13 @@
  */
 const crypto = require('crypto');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'mlimanifleet-dev-secret-change-in-production-2026';
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET || '';
+  if (secret.length < 32) {
+    throw new Error('JWT_SECRET must be set to a random value of at least 32 characters');
+  }
+  return secret;
+}
 const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function hashPassword(password) {
@@ -14,9 +20,11 @@ function hashPassword(password) {
 
 function verifyPassword(password, stored) {
   const [salt, hash] = stored.split(':');
-  if (!salt || !hash) return false;
+  if (!salt || !hash || !/^[a-f0-9]{128}$/i.test(hash)) return false;
   const test = crypto.scryptSync(password, salt, 64).toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(test, 'hex'));
+  const storedHash = Buffer.from(hash, 'hex');
+  const testHash = Buffer.from(test, 'hex');
+  return storedHash.length === testHash.length && crypto.timingSafeEqual(storedHash, testHash);
 }
 
 function createToken(payload) {
@@ -26,7 +34,7 @@ function createToken(payload) {
     iat: Date.now(),
     exp: Date.now() + TOKEN_TTL_MS
   })).toString('base64url');
-  const sig = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url');
+  const sig = crypto.createHmac('sha256', getJwtSecret()).update(`${header}.${body}`).digest('base64url');
   return `${header}.${body}.${sig}`;
 }
 
@@ -35,8 +43,15 @@ function verifyToken(token) {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   const [header, body, sig] = parts;
-  const expected = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url');
-  if (sig !== expected) return null;
+  let expected;
+  try {
+    expected = crypto.createHmac('sha256', getJwtSecret()).update(`${header}.${body}`).digest('base64url');
+  } catch {
+    return null;
+  }
+  const supplied = Buffer.from(sig);
+  const calculated = Buffer.from(expected);
+  if (supplied.length !== calculated.length || !crypto.timingSafeEqual(supplied, calculated)) return null;
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
     if (payload.exp && Date.now() > payload.exp) return null;

@@ -120,6 +120,11 @@ function receiveOrIssue(auth, opts) {
   const idx = all.findIndex(p => p.id === opts.part_id && (auth.role === 'platform_admin' || p.company_id === auth.company_id));
   if (idx < 0) throw new Error('Part not found');
 
+  if (opts.vehicle_id) {
+    const vehicle = (read('vehicles') || []).find(v => v.id === opts.vehicle_id && v.company_id === auth.company_id);
+    if (!vehicle) throw new Error('Vehicle does not belong to this company');
+  }
+
   const qty = Math.abs(Number(opts.qty) || 0);
   if (qty <= 0) throw new Error('Quantity required');
 

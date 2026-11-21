@@ -11,6 +11,8 @@ git clone <your-repo> mlimanifleet && cd mlimanifleet
 
 export PORT=3847
 export JWT_SECRET="$(openssl rand -hex 32)"
+export BOOTSTRAP_ADMIN_EMAIL="owner@example.com"
+export BOOTSTRAP_ADMIN_PASSWORD="use-a-unique-password-at-least-12-characters"
 export PAYMENT_DEMO=false   # after you set gateway keys
 export APP_URL=https://fleet.yourdomain.co.tz
 
@@ -69,16 +71,22 @@ docker compose up -d --build
 | Variable | Purpose |
 |----------|---------|
 | `PORT` | HTTP port (default 3847) |
-| `JWT_SECRET` | Token signing key |
+| `JWT_SECRET` | Required random token-signing key (at least 32 characters) |
+| `BOOTSTRAP_ADMIN_EMAIL` | First platform owner's email, used only when no users exist |
+| `BOOTSTRAP_ADMIN_PASSWORD` | First platform owner's password (at least 12 characters) |
 | `APP_URL` | Public URL for payment redirects/webhooks |
 | `PAYMENT_DEMO` | `true` = simulate payments |
 | `DATABASE_URL` | `postgres://user:pass@host:5432/db` |
+| `GPS_WEBHOOK_SECRET` | Required secret header for GPS device webhook requests |
 | `SELCOM_VENDOR_ID` / `SELCOM_API_KEY` / `SELCOM_API_SECRET` | Selcom live |
 | `PAWAPAY_API_TOKEN` / `PAWAPAY_ENV` | PawaPay (`sandbox` or `live`) |
 | `NOTIFY_DEMO` | `true` = log SMS/WA only |
 | `AT_USERNAME` / `AT_API_KEY` | Africa's Talking SMS |
 | `TWILIO_*` | Twilio SMS alternative |
 | `WA_ACCESS_TOKEN` / `WA_PHONE_NUMBER_ID` | WhatsApp Cloud API |
+
+When `DATABASE_URL` is configured but PostgreSQL cannot be reached, the server now stops instead of silently switching to temporary JSON storage. On Render, use the database's Internal Database URL when the web service and database are in the same region.
+
 
 ---
 
@@ -115,7 +123,7 @@ Or schedule with a small Node cron inside the process later.
 
 ## 7. Go-live checklist
 
-1. Set strong `JWT_SECRET`
+1. Set strong `JWT_SECRET` and private bootstrap admin credentials before first startup
 2. Configure Selcom **or** PawaPay credentials; set `PAYMENT_DEMO=false`
 3. Configure SMS (Africa's Talking recommended in TZ) or WhatsApp
 4. HTTPS via Nginx + Certbot

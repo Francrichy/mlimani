@@ -174,6 +174,8 @@ function requiredModulePermission(pathname) {
     ['/api/loans', 'finance'],
     ['/api/invoices', 'finance'],
     ['/api/reports', 'reports'],
+    ['/api/dashboard', 'reports'],
+    ['/api/notifications', 'billing'],
     ['/api/team', 'team'],
     ['/api/company', 'billing'],
     ['/api/billing', 'billing']

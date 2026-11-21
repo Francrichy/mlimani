@@ -50,7 +50,22 @@ function parseBody(req) {
 function getAuth(req) {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
-  return verifyToken(token);
+  const claims = verifyToken(token);
+  if (!claims || !claims.id) return null;
+
+  // Always use current database account data so disabled users and changed
+  // roles/permissions take effect immediately, without waiting for token expiry.
+  const currentUser = (read('users') || []).find(u => u.id === claims.id);
+  if (!currentUser || currentUser.active === false) return null;
+
+  return {
+    ...claims,
+    id: currentUser.id,
+    email: currentUser.email,
+    role: currentUser.role,
+    company_id: currentUser.company_id || null,
+    permissions: currentUser.permissions || null
+  };
 }
 
 function requireAuth(req, res) {
@@ -384,6 +399,9 @@ async function handleApi(req, res, pathname) {
     }
     if (!user || !verifyPassword(password, user.password)) {
       return send(res, 401, { error: 'Invalid login or password' });
+    }
+    if (user.active === false) {
+      return send(res, 403, { error: 'This account has been disabled. Contact your company administrator.' });
     }
     const token = createToken({ id: user.id, email: user.email, role: user.role, company_id: user.company_id });
     return send(res, 200, {

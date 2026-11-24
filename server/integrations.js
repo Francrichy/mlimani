@@ -4,6 +4,7 @@
  * All write requests are staged for approval by the company's owner.
  */
 const crypto = require('crypto');
+const { createToken, verifyToken } = require('./auth');
 const { read, write, uid, now } = require('./db');
 const mod = require('./modules');
 const fin = require('./finance');
@@ -220,6 +221,24 @@ async function handle(req, res, pathname, context) {
   try { tenantAuth(auth); }
   catch (error) { send(res, 403, { error: error.message }); return true; }
 
+  // Issue a short-lived, MCP-only token. No customer database rows or passwords are changed.
+  if (pathname === '/api/integrations/access-token' && req.method === 'POST') {
+    if (auth.integration || !isOwner(auth)) {
+      send(res, 403, { error: 'Sign in as a company owner in Mlimani Fleet to create an AI connection token.' });
+      return true;
+    }
+    const token = createToken({ id: auth.id, integration: 'mlimani-ai' });
+    const claims = verifyToken(token);
+    send(res, 200, {
+      token,
+      expires_at: claims?.exp || null,
+      expires_in_days: 7,
+      scope: 'Mlimani Fleet MCP only',
+      message: 'This token is shown once. Store it only in the trusted Mlimani AI connection screen.'
+    });
+    return true;
+  }
+
   if (pathname === '/api/integrations/status' && req.method === 'GET') {
     send(res, 200, { name: 'Mlimani AI integration', version: '1.0.0', rest_api: true, mcp: true, tenant_scoped: true, write_policy: 'company-owner approval required', mcp_endpoint: '/api/mcp' });
     return true;
@@ -247,6 +266,11 @@ async function handle(req, res, pathname, context) {
     });
     return true;
   }
+  if (auth.integration === 'mlimani-ai' && pathname.startsWith('/api/integrations/approvals')) {
+    send(res, 403, { error: 'AI connection tokens cannot approve or reject actions. A company owner must do that in Fleet.' });
+    return true;
+  }
+
   if (pathname === '/api/integrations/approvals' && req.method === 'GET') {
     if (!isOwner(auth)) { send(res, 403, { error: 'Company owner permission required' }); return true; }
     send(res, 200, { approvals: listApprovals(auth) });

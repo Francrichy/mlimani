@@ -315,6 +315,11 @@ async function handleApi(req, res, pathname) {
   }
 
 
+  const integrationAuth = getAuth(req);
+  if (integrationAuth?.integration === 'mlimani-ai' && !['/api/mcp', '/api/integrations/status'].includes(pathname)) {
+    return send(res, 403, { error: 'This short-lived token is restricted to the Mlimani AI MCP connection.' });
+  }
+
   if (pathname.startsWith('/api/') && !enforceModulePermission(req, res, pathname)) return;
 
   // ---- SUBSCRIPTION GATE (lock unpaid / expired) ----

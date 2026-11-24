@@ -9,11 +9,20 @@ This adds an authenticated REST integration reference and an MCP (Model Context 
 - OpenAPI description: `GET https://app.mlimani.net/api/integrations/openapi.json`
 - Pending owner approvals: `GET https://app.mlimani.net/api/integrations/approvals`
 
-The connector uses the same signed-in Mlimani account token as the web application. First sign in through the normal Mlimani login endpoint (`POST /api/auth/login`) and use the returned token as a Bearer token. Do not put passwords or tokens in source control, public prompts, or shared screenshots. Prefer a dedicated user account with only the permissions needed by the AI integration.
+The connector validates the signed-in user's current company membership and module permissions on every request. Never put passwords or tokens in source control, public prompts, or shared screenshots.
+
+## Generate a secure Mlimani AI token
+
+1. Sign in to your Mlimani Fleet company account as a company owner.
+2. Open `https://app.mlimani.net/ai-connect.html`.
+3. Select **Tengeneza token ya Mlimani AI** and copy the token shown once.
+4. Paste it into **Mlimani AI → Plugins → Mlimani Fleet Management**.
+
+The token expires after 7 days. Generate a fresh one and reconnect when it expires. It is restricted to the MCP endpoint and cannot call ordinary Fleet REST routes or approve/reject owner actions. It is signed with the existing JWT secret and is not stored in PostgreSQL or the Fleet database. No customer records or passwords are changed.
 
 ## MCP client configuration
 
-Configure the MCP client with the endpoint and an access token issued by Mlimani:
+Configure the MCP client with the endpoint and the short-lived integration token:
 
 ```json
 {

@@ -4,7 +4,7 @@
  * All write requests are staged for approval by the company's owner.
  */
 const crypto = require('crypto');
-const { createToken } = require('./auth');
+const { createToken, verifyToken } = require('./auth');
 const { read, write, uid, now } = require('./db');
 const mod = require('./modules');
 const fin = require('./finance');
@@ -228,8 +228,10 @@ async function handle(req, res, pathname, context) {
       return true;
     }
     const token = createToken({ id: auth.id, integration: 'mlimani-ai' });
+    const claims = verifyToken(token);
     send(res, 200, {
       token,
+      expires_at: claims?.exp || null,
       expires_in_days: 7,
       scope: 'Mlimani Fleet MCP only',
       message: 'This token is shown once. Store it only in the trusted Mlimani AI connection screen.'

@@ -13,10 +13,13 @@ The connector validates the signed-in user's current company membership and modu
 
 ## Generate a secure Mlimani AI token
 
-1. Sign in to your Mlimani Fleet company account as a company owner.
-2. Open `https://app.mlimani.net/ai-connect.html`.
-3. Select **Tengeneza token ya Mlimani AI** and copy the token shown once.
-4. Paste it into **Mlimani AI → Plugins → Mlimani Fleet Management**.
+1. Sign in to your Mlimani Fleet company account as the company owner.
+2. Open **AI Integration** from the left-hand Fleet menu.
+3. Under **Mlimani AI access token**, select **Generate Mlimani AI token**.
+4. Copy the token shown once.
+5. Paste it into **Mlimani AI → Plugins → Mlimani Fleet Management**.
+
+The direct page `https://app.mlimani.net/ai-connect.html` remains available as an alternative. No Mlimani AI API key is entered in Fleet or in Render.
 
 The token expires after 7 days. Generate a fresh one and reconnect when it expires. It is restricted to the MCP endpoint and cannot call ordinary Fleet REST routes or approve/reject owner actions. It is signed with the existing JWT secret and is not stored in PostgreSQL or the Fleet database. No customer records or passwords are changed.
 

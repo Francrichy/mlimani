@@ -886,6 +886,25 @@ async function renderAIIntegration() {
         <button onclick="copyAIEndpoint()" class="bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">Copy connection address</button>
       </div>
       <div class="bg-white rounded-xl border p-5 space-y-3">
+        <div class="flex items-center justify-between gap-2">
+          <div class="font-semibold">Mlimani AI access token</div>
+          <span class="text-xs rounded-full bg-emerald-50 text-emerald-700 px-2 py-1">Owner only</span>
+        </div>
+        <p class="text-sm text-slate-500">Generate a secure 7-day token here, then paste it into Mlimani AI → Plugins → Mlimani Fleet Management. You do not need to create an API key in Render.</p>
+        <button id="generate-mlimani-ai-token" onclick="generateMlimaniAIToken()" class="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold">Generate Mlimani AI token</button>
+        <div id="mlimani-ai-token-status" class="text-sm text-slate-500" role="status" aria-live="polite"></div>
+        <div id="mlimani-ai-token-box" class="hidden space-y-2">
+          <label for="mlimani-ai-token-value" class="block text-sm font-medium">Your token (shown once)</label>
+          <textarea id="mlimani-ai-token-value" readonly spellcheck="false" rows="4" class="w-full border rounded-lg p-3 text-xs font-mono break-all" style="overflow-wrap:anywhere"></textarea>
+          <p id="mlimani-ai-token-expiry" class="text-xs text-slate-500">Expires after 7 days.</p>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="copyMlimaniAIToken()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-sm font-semibold">Copy token</button>
+            <button onclick="hideMlimaniAIToken()" class="border px-3 py-2 rounded-lg text-sm font-semibold">Hide token</button>
+          </div>
+          <p class="text-xs text-amber-700 bg-amber-50 rounded-lg p-3">Keep this token private. Do not send it in WhatsApp or paste it into ChatGPT. Store it only in the Mlimani AI connection form.</p>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl border p-5 space-y-3">
         <div class="font-semibold">Security and permissions</div>
         <ul class="text-sm text-slate-600 list-disc pl-5 space-y-2">
           <li>Only data belonging to your signed-in company is available.</li>
@@ -935,6 +954,53 @@ function copyAIEndpoint() {
   if (!value) return;
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(value).then(() => alert('Connection address copied.')).catch(() => alert(value));
   else alert(value);
+}
+
+async function generateMlimaniAIToken() {
+  const button = document.getElementById('generate-mlimani-ai-token');
+  const status = document.getElementById('mlimani-ai-token-status');
+  const box = document.getElementById('mlimani-ai-token-box');
+  if (!button || !status || !box) return;
+  if (box.classList.contains('hidden') === false && !confirm('Generate a new token? Keep the existing token if it is already connected.')) return;
+  button.disabled = true;
+  status.textContent = 'Generating secure token…';
+  box.classList.add('hidden');
+  try {
+    const result = await api('/api/integrations/access-token', { method: 'POST', body: '{}' });
+    const field = document.getElementById('mlimani-ai-token-value');
+    if (!result.token || !field) throw new Error('The server did not return a token. Please try again.');
+    field.value = result.token;
+    document.getElementById('mlimani-ai-token-expiry').textContent = 'Expires in ' + (result.expires_in_days || 7) + ' days. Copy it now; it will not be shown again after you hide it or leave this page.';
+    box.classList.remove('hidden');
+    status.textContent = 'Token created successfully. Copy it and paste it into Mlimani AI.';
+  } catch (error) {
+    status.textContent = error.message || 'Could not generate token. Please sign in as the company owner and try again.';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function copyMlimaniAIToken() {
+  const field = document.getElementById('mlimani-ai-token-value');
+  const status = document.getElementById('mlimani-ai-token-status');
+  if (!field?.value) return;
+  try {
+    await navigator.clipboard.writeText(field.value);
+    if (status) status.textContent = 'Token copied. Paste it into Mlimani AI → Plugins → Mlimani Fleet Management.';
+  } catch {
+    field.focus();
+    field.select();
+    if (status) status.textContent = 'Select and copy the token from the text box.';
+  }
+}
+
+function hideMlimaniAIToken() {
+  const field = document.getElementById('mlimani-ai-token-value');
+  const box = document.getElementById('mlimani-ai-token-box');
+  const status = document.getElementById('mlimani-ai-token-status');
+  if (field) field.value = '';
+  box?.classList.add('hidden');
+  if (status) status.textContent = 'Token hidden from this screen.';
 }
 
 async function renderSettings() {

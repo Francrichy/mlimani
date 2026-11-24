@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="sw"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#123b29"><title>Unganisha Mlimani AI · Mlimani Fleet</title>
+<style>
+:root{font-family:system-ui;color:#203329;background:#f1f5ef}*{box-sizing:border-box}body{margin:0;padding:22px}.wrap{max-width:680px;margin:6vh auto}.card{background:#fff;border:1px solid #dce6d8;border-radius:22px;padding:clamp(18px,4vw,30px);box-shadow:0 12px 35px #102b1c12}h1{color:#123b29;margin:0 0 10px}.muted{color:#5d6f62;line-height:1.55}button{border:0;border-radius:12px;background:#f2b323;color:#203329;font-weight:800;padding:13px 18px;font-size:1rem;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.token{display:none;margin-top:18px}textarea{width:100%;min-height:130px;padding:12px;border:1px solid #cad8c8;border-radius:12px;font:13px ui-monospace,monospace;overflow-wrap:anywhere}.note{background:#fff6dc;border-radius:12px;padding:12px;color:#695019;line-height:1.5;margin:16px 0}.status{margin-top:12px;color:#a13e2d;white-space:pre-wrap}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+</style></head>
+<body><main class="wrap"><section class="card">
+<p class="muted">MLIMANI FLEET · AI INTEGRATION</p><h1>Tengeneza kiunganishi cha Mlimani AI</h1>
+<p class="muted">Ukiwa umeingia kwenye akaunti ya kampuni ya Mlimani Fleet, bonyeza kitufe hapa chini. Mfumo utatengeneza token ya muda ya siku 7 inayoruhusiwa kutumia MCP ya Fleet pekee.</p>
+<div class="note"><strong>Usalama:</strong> Token hii ni siri kama nenosiri. Itumie ndani ya Mlimani AI pekee. Haibadilishi password yako wala kuandika chochote kwenye database ya Fleet. AI inaweza kusoma taarifa kulingana na ruhusa za akaunti yako; hatua za kuandika bado zinahitaji idhini ya mmiliki ndani ya Fleet.</div>
+<button id="generate">Tengeneza token ya Mlimani AI</button><div id="status" class="status" role="status"></div>
+<div id="tokenBox" class="token"><label for="token">Token yako (inaonekana mara moja)</label><textarea id="token" readonly spellcheck="false"></textarea><p class="muted" id="expiry">Token inaisha baada ya siku 7.</p><div class="actions"><button id="copy">Nakili token</button><button id="hide" type="button">Ficha token</button></div><p class="muted">Rudi Mlimani AI → Plugins → Mlimani Fleet Management, kisha bandika token hii.</p></div>
+</section></main>
+<script>
+const $=id=>document.getElementById(id);
+$('generate').onclick=async()=>{const token=localStorage.getItem('mf_token');if(!token){$('status').textContent='Hujaingia kwenye Mlimani Fleet. Ingia kwanza kwenye akaunti ya kampuni, kisha fungua ukurasa huu tena.';return}
+$('generate').disabled=true;$('status').textContent='Inatengeneza token…';$('tokenBox').style.display='none';
+try{const r=await fetch('/api/integrations/access-token',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:'{}'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Imeshindikana kutengeneza token.');$('token').value=d.token;$('expiry').textContent='Token inaisha baada ya siku '+d.expires_in_days+'. Itumie sasa ndani ya Mlimani AI.';$('tokenBox').style.display='block';$('status').textContent='Token imetengenezwa. Nakili na uiweke kwenye Mlimani AI.'}catch(e){$('status').textContent=e.message}finally{$('generate').disabled=false}};
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText($('token').value);$('status').textContent='Token imenakiliwa.'}catch{$('status').textContent='Nakili token kwa kuichagua kwenye kisanduku.'}};
+$('hide').onclick=()=>{$('token').value='';$('tokenBox').style.display='none';$('status').textContent='Token imefichwa kwenye ukurasa huu.'};
+</script></body></html>
